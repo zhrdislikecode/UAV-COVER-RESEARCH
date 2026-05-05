@@ -45,7 +45,7 @@ def greedy(env, weight = 0.25, threshold = 1):
                         deploy_cluster = env.clusters[uav.follow_cluster_list[uav_deploy_idx]]
                         move_dis = np.linalg.norm(deploy_cluster.center - uav.position)
                         uav.macro_fly_time = int(move_dis * 100 / (20 * slot))
-                        uav.current_battery_capacity -= uav.macro_fly_time * uav.high_speed_power
+                        uav.current_battery_capacity -= uav.macro_fly_time * uav.high_speed_energy
                         uav.follow_cluster = deploy_cluster
                         uav.position = np.array([deploy_cluster.center[0], deploy_cluster.center[1]])
                     uav_deploy_idx += 1
@@ -103,7 +103,7 @@ def greedy(env, weight = 0.25, threshold = 1):
                         deploy_cluster = env.clusters[uav.follow_cluster_list[uav_deploy_idx]]
                         move_dis = np.linalg.norm(deploy_cluster.center - uav.position)
                         uav.macro_fly_time = int(move_dis * 100 / (20 * slot))
-                        uav.current_battery_capacity -= uav.macro_fly_time * uav.high_speed_power
+                        uav.current_battery_capacity -= uav.macro_fly_time * uav.high_speed_energy
                         uav.follow_cluster = deploy_cluster
                         uav.position = np.array([deploy_cluster.center[0], deploy_cluster.center[1]])
                     uav_deploy_idx += 1

@@ -1,234 +1,296 @@
 import math
-
 import numpy as np
 
-# α：建成用地面积与总用地面积之比
-# β：单位面积的平均建筑数量
-# γ：根据瑞利概率密度函数描述建筑物高度分布的尺度参数
-# (α, β, γ)为三元组，郊区(0.1, 750, 8)，城市(0.3, 500, 15)，密集城市(0.5, 300, 20)，高层城市(0.5, 300, 50)
-# a 和 b 是由多项式计算而来
-a = 15
-b = 0.2
-los_loss_value = 1
-nlos_loss_value = 50
 
-def calculate_LoS_possibility(height, distance):
-    # 计算角度 θ
-    theta = math.asin(height / distance)
-    theta = math.degrees(theta)
-    # 计算 P(LoS, θ)
-    p_los = 1 / (1 + a * math.exp(-b * (theta - a)))
-    return p_los
+# ============================================================
+#  常量
+# ============================================================
+COVERAGE_RADIUS = 0.5          # 覆盖半径（归一化单位，1单位=100m → 50m）
+SCENE_SIZE = 15.0              # 场景大小
+COORD_SCALE = 100.0            # 坐标缩放：1 归一化单位 = 100 米
+UAV_HEIGHT = 10.0              # 无人机飞行高度（米）
+HEIGHT_SQ = UAV_HEIGHT ** 2    # 高度平方，用于 3D 距离计算
 
-def calculate_path_loss(height, distance):
-    los_possibility = calculate_LoS_possibility(height, distance)
-    return 20 * math.log10(4 * math.pi * 2.4e9 * distance / 3e8) + los_possibility * los_loss_value + (1 - los_possibility) * nlos_loss_value
+# 通信参数
+BANDWIDTH_HZ = 200e6
+TRANSMIT_POWER_WATT = 1.0
+NOISE_DENSITY_W_PER_HZ = 1e-17
+LOS_LOSS_DB = 1.0
+NLOS_LOSS_DB = 50.0
+A_PARAM = 15.0                 # LoS 概率公式参数 a
+B_PARAM = 0.2                  # LoS 概率公式参数 b
+FREQ_HZ = 2.4e9                # 载波频率
 
-def calculate_uav_rate_from_path_loss(
-    pl_a2g_db,
-    bandwidth_hz=200e6,
-    time_fraction=1.0,
-    transmit_power_watt=1.0,
-    noise_density_w_per_hz=1e-17,
-    num_users=30
-):
-    # 每个用户分到的带宽
-    bandwidth_per_user = bandwidth_hz / num_users
 
-    # 总噪声功率
-    noise_power = noise_density_w_per_hz * bandwidth_per_user
+# ============================================================
+#  能耗模型
+# ============================================================
+class PowerModel:
+    """无人机功率与能耗计算"""
 
-    # 信道增益（线性）
-    channel_gain = 10 ** (-pl_a2g_db / 10)
+    def __init__(self, slot_seconds: float):
+        self.slot = slot_seconds
 
-    # 信噪比 SNR（线性）
-    snr = (transmit_power_watt * channel_gain) / noise_power
-
-    # 速率计算（bit/s）
-    rate_bps = (bandwidth_hz * time_fraction / num_users) * np.log2(1 + snr)
-
-    # Mbps 输出
-    rate_mbps = rate_bps / 1e6
-    return rate_mbps
-
-def calculate_comm_rate(height, distance, num_users = 30):
-    path_loss = calculate_path_loss(height, distance)
-    return calculate_uav_rate_from_path_loss(path_loss, num_users = num_users)
-
-def P(v):
-    return (0.0092 * v ** 3
+    @staticmethod
+    def power_watt(speed_m_s: float) -> float:
+        """给定速度 (m/s) 下的功率 (W)"""
+        v = speed_m_s
+        return (
+            0.0092 * v ** 3
             + 0.0166 * v ** 2
-            + 88.6279 * (math.sqrt(math.sqrt(1 +  v ** 4 / 1055.0673) -  v ** 2 / 32.4818))
-            + 79.8563)
+            + 88.6279 * (math.sqrt(math.sqrt(1 + v ** 4 / 1055.0673) - v ** 2 / 32.4818))
+            + 79.8563
+        )
+
+    def energy_per_slot(self, speed_m_s: float) -> float:
+        """给定速度下单时隙能耗"""
+        return self.power_watt(speed_m_s) * self.slot / 3600.0
 
 
+# ============================================================
+#  通信模型
+# ============================================================
+def _los_probability(height: float, distance_3d: float) -> float:
+    """计算视距 (LoS) 概率"""
+    theta = math.degrees(math.asin(height / distance_3d))
+    return 1.0 / (1.0 + A_PARAM * math.exp(-B_PARAM * (theta - A_PARAM)))
 
+
+def _path_loss_db(height: float, distance_3d: float) -> float:
+    """计算路径损耗 (dB)"""
+    p_los = _los_probability(height, distance_3d)
+    fspl = 20.0 * math.log10(4.0 * math.pi * FREQ_HZ * distance_3d / 3e8)
+    return fspl + p_los * LOS_LOSS_DB + (1.0 - p_los) * NLOS_LOSS_DB
+
+
+def compute_comm_rate(height: float, distance_2d: float, num_users: int = 30) -> float:
+    """计算 UAV 到用户的通信速率 (Mbps)
+
+    Args:
+        height: 无人机高度 (m)
+        distance_2d: 水平距离（归一化单位，会 *COORD_SCALE 转为米）
+        num_users: 集群内用户数
+    """
+    dis_3d = math.sqrt((distance_2d * COORD_SCALE) ** 2 + height ** 2)
+    pl_db = _path_loss_db(height, dis_3d)
+
+    bw_per_user = BANDWIDTH_HZ / num_users
+    noise_power = NOISE_DENSITY_W_PER_HZ * bw_per_user
+    channel_gain = 10.0 ** (-pl_db / 10.0)
+    snr = (TRANSMIT_POWER_WATT * channel_gain) / noise_power
+    rate_bps = (BANDWIDTH_HZ / num_users) * math.log2(1.0 + snr)
+    return rate_bps / 1e6  # Mbps
+
+
+# ============================================================
+#  UAV 类
+# ============================================================
 class UAV:
-    def __init__(self, uav_id, position=(0, 0),  slot = 4, multiple = 2):
+    # 动作空间：0=悬停, 1-4=低速移动, 5-8=中速移动
+    ACTION_HOVER = 0
+    ACTION_LOW_MAX = 4
+    ACTION_MID_MAX = 8
+
+    def __init__(self, uav_id: int, slot: float = 4.0, multiple: float = 2.0,
+                 scene_size: float = SCENE_SIZE):
         self.id = uav_id
-        self.position = np.array(position, dtype=np.float32)
-        self.follow_cluster = None
-        self.follow_cluster_list = list()
-        self.total_battery_capacity = 85
-        self.current_battery_capacity = 85
-        self.hover_power = P(0) * slot / 3600
-        self.low_speed_power = P(1) * slot / 3600
-        self.middle_speed_power = P(multiple) * slot / 3600
         self.slot = slot
-        self.high_speed_power = P(30) * slot / 3600
-        self.moves = [
-            np.array([0, 0]),
-            np.array([0, slot / 100]),
-            np.array([0, -slot / 100]),
-            np.array([slot / 100, 0]),
-            np.array([-slot / 100, 0]),
-            np.array([0, multiple * slot / 100]),
-            np.array([0, -multiple * slot / 100]),
-            np.array([multiple * slot / 100, 0]),
-            np.array([-multiple * slot / 100, 0])
-        ]
+        self.scene_size = scene_size
+        self.position = np.array([0.0, 0.0], dtype=np.float32)
+        self.follow_cluster = None
+        self.follow_cluster_list: list = []
+        self.total_battery_capacity = 85.0
+        self.current_battery_capacity = 85.0
         self.macro_fly_time = 0
-        self.cluster_coverage_time = 0  # 追踪当前集群的覆盖时间
-        self.last_cluster_id = None  # 记录上一个集群ID
+        self.cluster_coverage_time = 0
+        self.last_cluster_id = None
+        self.is_consume_energy = False
 
-    def move(self, direction):
-        self.position += np.array(direction, dtype=np.float32)
+        # 能耗模型
+        self._power = PowerModel(slot)
+        self.hover_energy = self._power.energy_per_slot(0.0)
+        self.low_speed_energy = self._power.energy_per_slot(1.0)
+        self.mid_speed_energy = self._power.energy_per_slot(multiple)
+        self.high_speed_energy = self._power.energy_per_slot(30.0)
 
-    def revise_direction(self, action):
-        target_position = self.follow_cluster.center + self.follow_cluster.direction
-        best_action, best_dist = 0, float("inf")
-        for action, move in enumerate(self.moves):
-            if np.linalg.norm(move) == 0:
-                continue
-            new_position = self.position + move
-            dist = np.linalg.norm(new_position - target_position)
-            if dist < best_dist:
-                best_dist = dist
-                best_action = action
+        # 动作对应的位移量（归一化单位）
+        step_low = slot / 100.0
+        step_mid = multiple * slot / 100.0
+        self.moves = np.array([
+            [0.0, 0.0],            # 0: 悬停
+            [0.0, step_low],       # 1: 北慢
+            [0.0, -step_low],      # 2: 南慢
+            [step_low, 0.0],       # 3: 东慢
+            [-step_low, 0.0],      # 4: 西慢
+            [0.0, step_mid],       # 5: 北中
+            [0.0, -step_mid],      # 6: 南中
+            [step_mid, 0.0],       # 7: 东中
+            [-step_mid, 0.0],      # 8: 西中
+        ], dtype=np.float32)
 
-        return best_action
+        # 动作 → 能耗映射
+        self._action_energy = self._build_action_energy()
 
+    def _build_action_energy(self):
+        e = [0.0] * 9
+        e[0] = self.hover_energy
+        for i in range(1, 5):
+            e[i] = self.low_speed_energy
+        for i in range(5, 9):
+            e[i] = self.mid_speed_energy
+        return e
+
+    # ---- 基础操作 ----
     def get_position(self):
         return self.position
 
     def get_state(self):
+        """获取简单状态向量 (6维): [cluster_x, cluster_y, cluster_vx, cluster_vy, uav_x, uav_y]"""
+        if self.follow_cluster is None:
+            return np.zeros(6, dtype=np.float32)
         cluster_pos = np.array(self.follow_cluster.center)
         cluster_dir = np.array(self.follow_cluster.direction)
         uav_pos = self.get_position()
+        return np.concatenate([cluster_pos, cluster_dir, uav_pos]).astype(np.float32)
 
-        state = np.concatenate([cluster_pos, cluster_dir, uav_pos], axis=0)
-        return state.astype(np.float32)
+    # ---- 微观移动 ----
+    def step(self, action: int):
+        """执行单步微观移动
 
-    def step(self, action):
-        if action == 0:
-            self.current_battery_capacity -= self.hover_power
-        elif action <= 4:
-            self.current_battery_capacity -= self.low_speed_power
-        else:
-            self.current_battery_capacity -= self.middle_speed_power
+        Returns: (next_state, reward, done, covered_count, comm_quality)
+        """
+        old_position = self.position.copy()
 
-        position = np.array(self.position[:2], dtype=np.float32)
+        # 1. 扣除能耗
+        self._deduct_energy(action)
 
-        self.position[:2] += self.moves[action]
+        # 2. 移动
+        self.position += self.moves[action]
+        self.position = np.clip(self.position, 0.0, self.scene_size)
 
-        self.position[:2] = np.clip(self.position[:2], 0, 15)
+        # 3. 计算奖励
+        reward, covered, comm_quality = self._compute_reward(old_position, action)
 
-        reward, covered, comm_quality = self.get_reward(position, action)
+        return self.get_state(), reward, False, covered, comm_quality
 
-        done = False
+    def _deduct_energy(self, action: int):
+        """扣除动作对应的能耗"""
+        self.current_battery_capacity -= self._action_energy[action]
 
-        return self.get_state(), reward, done, covered, comm_quality
+    def _compute_reward(self, old_position: np.ndarray, action: int):
+        """计算微观移动的奖励值"""
+        if self.follow_cluster is None:
+            return -10.0, 0, 0.0
 
-    def get_reward(self, position=None, action=None):
-        covered = 0
-        comm_quality = 0
         cluster = self.follow_cluster
-        uav_pos = np.array(self.get_position()[:2], dtype=np.float32)
-        cluster_center = np.array(cluster.center[:2], dtype=np.float32)
-        dis_uav_cluster = np.linalg.norm(uav_pos - cluster_center)
-        dis_uav_cluster_old = np.linalg.norm(position[:2] - cluster_center)
+        new_pos = self.position
+        cluster_center = cluster.center[:2]
+
+        new_dist_to_center = float(np.linalg.norm(new_pos - cluster_center))
+        old_dist_to_center = float(np.linalg.norm(old_position[:2] - cluster_center))
+
+        covered = 0
+        comm_quality = 0.0
+        num_users = len(cluster.users)
+
         for user in cluster.users:
-            user_pos = np.array(user.position[:2], dtype=np.float32)
-            distance = np.linalg.norm(uav_pos - user_pos)
-            if distance <= 0.5:
+            user_pos = user.position[:2]
+            distance = float(np.linalg.norm(new_pos - user_pos))
+            if distance <= COVERAGE_RADIUS:
                 covered += 1
                 user.cover_num += 1
-            dis = math.sqrt(distance * distance * 10000 + 100)
-            comm_quality += calculate_comm_rate(10, dis, num_users=len(self.follow_cluster.users))
-        comm_quality = comm_quality / 40 * (self.slot / 4)
+            comm_quality += compute_comm_rate(UAV_HEIGHT, distance, num_users=num_users)
+
+        comm_quality = comm_quality / 40.0 * (self.slot / 4.0)
+
         if covered == 0:
-            return -dis_uav_cluster, 0, comm_quality
+            return -new_dist_to_center, 0, comm_quality
 
-        if action == 0:
-            reward = 0.5 * comm_quality + 0.5 * covered
-        elif action <= 4:
-            reward = 0.5 * comm_quality + 0.5 * covered - 1
+        # 基础奖励：通信质量 + 覆盖数
+        reward = 0.5 * comm_quality + 0.5 * covered
+
+        # 动作惩罚
+        if action == self.ACTION_HOVER:
+            pass  # 悬停无惩罚
+        elif action <= self.ACTION_LOW_MAX:
+            reward -= 1.0
         else:
-            reward = 0.5 * comm_quality + 0.5 * covered - 2
+            reward -= 2.0
 
-        if dis_uav_cluster_old < dis_uav_cluster:
-            reward -= 5
+        # 远离集群惩罚
+        if old_dist_to_center < new_dist_to_center:
+            reward -= 5.0
 
         return reward, covered, comm_quality / 25.6
 
+    # ---- 方向修正 ----
+    def revise_direction(self, action: int) -> int:
+        """将动作修正为朝向目标集群的方向"""
+        if self.follow_cluster is None:
+            return action
+        target = self.follow_cluster.center + self.follow_cluster.direction
+        best_action, best_dist = 0, float("inf")
+        for a, move in enumerate(self.moves):
+            if np.linalg.norm(move) == 0:
+                continue
+            new_pos = self.position + move
+            dist = float(np.linalg.norm(new_pos - target))
+            if dist < best_dist:
+                best_dist = dist
+                best_action = a
+        return best_action
+
+    # ============================================================
+    #  PK 变体方法（供 DMTD 等算法使用）
+    # ============================================================
     def get_dqn_pk_state(self, env):
         state = np.array([])
-        
-        # 1. 当前UAV位置 (归一化到[0,1])
         uav_pos = self.get_position()
-        state = np.append(state, uav_pos[0] / 15.0)
-        state = np.append(state, uav_pos[1] / 15.0)
-        
-        # 2. 当前跟随的集群信息
+        state = np.append(state, uav_pos[0] / SCENE_SIZE)
+        state = np.append(state, uav_pos[1] / SCENE_SIZE)
+
         if self.follow_cluster is not None:
             cluster = self.follow_cluster
-            state = np.append(state, cluster.center[0] / 15.0)
-            state = np.append(state, cluster.center[1] / 15.0)
-            if cluster.direction is not None:
-                state = np.append(state, cluster.direction[0])
-                state = np.append(state, cluster.direction[1])
-            else:
-                state = np.append(state, 0.0)
-                state = np.append(state, 0.0)
-        else:
-
-            state = np.append(state, [0.0, 0.0, 0.0, 0.0])
-        
-
-        max_score = max([c.score for c in env.clusters]) if env.clusters else 1.0
-        for cluster in env.clusters:
-            state = np.append(state, cluster.center[0] / 15.0)
-            state = np.append(state, cluster.center[1] / 15.0)
+            state = np.append(state, cluster.center[0] / SCENE_SIZE)
+            state = np.append(state, cluster.center[1] / SCENE_SIZE)
             if cluster.direction is not None:
                 state = np.append(state, cluster.direction[0])
                 state = np.append(state, cluster.direction[1])
             else:
                 state = np.append(state, [0.0, 0.0])
+        else:
+            state = np.append(state, [0.0, 0.0, 0.0, 0.0])
 
+        max_score = max([c.score for c in env.clusters]) if env.clusters else 1.0
+        for cluster in env.clusters:
+            state = np.append(state, cluster.center[0] / SCENE_SIZE)
+            state = np.append(state, cluster.center[1] / SCENE_SIZE)
+            if cluster.direction is not None:
+                state = np.append(state, cluster.direction[0])
+                state = np.append(state, cluster.direction[1])
+            else:
+                state = np.append(state, [0.0, 0.0])
             score_norm = cluster.score / max(max_score, 1.0)
             state = np.append(state, min(score_norm, 1.0))
-        
 
         for uav in env.uavs:
             if uav.id != self.id:
                 other_pos = uav.get_position()
-                state = np.append(state, other_pos[0] / 15.0)
-                state = np.append(state, other_pos[1] / 15.0)
-        
+                state = np.append(state, other_pos[0] / SCENE_SIZE)
+                state = np.append(state, other_pos[1] / SCENE_SIZE)
 
         coverage_time_norm = min(self.cluster_coverage_time / 100.0, 1.0)
         state = np.append(state, coverage_time_norm)
-        
         return state.astype(np.float32)
 
     def get_dqn_pk_reward(self, env, is_macro_switch=False):
-        total_comm = 0
+        total_comm = 0.0
         total_cover = 0
-        competition_penalty = 0
-        
+        competition_penalty = 0.0
+
         if self.follow_cluster is None:
             return -10.0, 0, 0.0
-        
+
         cluster = self.follow_cluster
         uav_pos = self.get_position()
 
@@ -240,102 +302,94 @@ class UAV:
 
         covered_users = []
         for user in cluster.users:
-            distance = math.sqrt((uav_pos[0] - user.position[0]) ** 2 + (uav_pos[1] - user.position[1]) ** 2)
-            if distance <= 0.5:
+            distance = math.sqrt(
+                (uav_pos[0] - user.position[0]) ** 2
+                + (uav_pos[1] - user.position[1]) ** 2
+            )
+            if distance <= COVERAGE_RADIUS:
                 covered_users.append(user)
                 user.cover_num += 1
                 total_cover += 1
-                dis_m = distance * 100
-                dis_3d = math.sqrt(dis_m * dis_m + 100)
-                total_comm += calculate_comm_rate(10, dis_3d, num_users=len(cluster.users))
+                dis_3d = math.sqrt((distance * COORD_SCALE) ** 2 + HEIGHT_SQ)
+                total_comm += compute_comm_rate(UAV_HEIGHT, distance, num_users=len(cluster.users))
 
+        # 竞争惩罚：与其他 UAV 覆盖同一用户
         for other_uav in env.uavs:
-            if other_uav.id != self.id and other_uav.follow_cluster == cluster:
-                other_pos = other_uav.get_position()
-                for user in covered_users:
-                    distance = math.sqrt((other_pos[0] - user.position[0]) ** 2 + (other_pos[1] - user.position[1]) ** 2)
-                    if distance <= 0.5:
-                        competition_penalty += 1
+            if other_uav.id == self.id or other_uav.follow_cluster != cluster:
+                continue
+            other_pos = other_uav.get_position()
+            for user in covered_users:
+                dist = math.sqrt(
+                    (other_pos[0] - user.position[0]) ** 2
+                    + (other_pos[1] - user.position[1]) ** 2
+                )
+                if dist <= COVERAGE_RADIUS:
+                    competition_penalty += 1.0
 
-        collision_penalty = 0
+        # 碰撞惩罚
+        collision_penalty = 0.0
         for other_uav in env.uavs:
             if other_uav.id != self.id:
-                distance = math.sqrt((uav_pos[0] - other_uav.position[0]) ** 2 + 
-                                   (uav_pos[1] - other_uav.position[1]) ** 2)
-                if distance < 0.5:  # 距离过近
-                    collision_penalty = -50
-        
+                dist = math.sqrt(
+                    (uav_pos[0] - other_uav.position[0]) ** 2
+                    + (uav_pos[1] - other_uav.position[1]) ** 2
+                )
+                if dist < COVERAGE_RADIUS:
+                    collision_penalty = -50.0
 
-        fairness_penalty = 0
+        # 公平性惩罚：覆盖同一集群超过 25 步
+        fairness_penalty = 0.0
         if self.cluster_coverage_time > 25:
-            excess_time = self.cluster_coverage_time - 25
-            fairness_penalty = -excess_time * 0.5
+            fairness_penalty = -(self.cluster_coverage_time - 25) * 0.5
 
-        macro_switch_penalty = 0
-        if is_macro_switch:
-            macro_switch_penalty = -5.0
+        macro_switch_penalty = -5.0 if is_macro_switch else 0.0
+        total_comm = total_comm / 1000.0
 
-        total_comm = total_comm / 1000
-
-        reward = (0.5 * total_comm + 0.5 * total_cover + 
-                 competition_penalty * (-1.0) + 
-                 collision_penalty + 
-                 fairness_penalty + 
-                 macro_switch_penalty)
-        
+        reward = (
+            0.5 * total_comm
+            + 0.5 * total_cover
+            - competition_penalty
+            + collision_penalty
+            + fairness_penalty
+            + macro_switch_penalty
+        )
         return reward, total_cover, total_comm
 
-    def step_pk(self, action, env):
-
+    def step_pk(self, action: int, env):
+        """PK 变体的 step：支持宏观集群切换 + 微观移动"""
         is_macro_switch = False
 
         if action >= 9:
+            # 宏观动作：切换到目标集群
             target_cluster_id = action - 9
             if target_cluster_id < len(env.clusters):
                 target_cluster = env.clusters[target_cluster_id]
-
                 if self.cluster_coverage_time >= 25 or self.follow_cluster is None:
-                    if self.follow_cluster is not None:
-                        move_dis = np.linalg.norm(target_cluster.center - self.position)
-                    else:
-                        move_dis = np.linalg.norm(target_cluster.center - self.position)
-
-                    self.macro_fly_time = int(move_dis * 100 / (20 * self.slot))
-                    self.current_battery_capacity -= self.macro_fly_time * self.high_speed_power
-
+                    move_dis = float(np.linalg.norm(target_cluster.center - self.position))
+                    self.macro_fly_time = int(move_dis * COORD_SCALE / (20.0 * self.slot))
+                    self.current_battery_capacity -= self.macro_fly_time * self.high_speed_energy
                     self.follow_cluster = target_cluster
-                    self.position = np.array([target_cluster.center[0], target_cluster.center[1]])
+                    self.position = np.array(
+                        [target_cluster.center[0], target_cluster.center[1]],
+                        dtype=np.float32
+                    )
                     self.cluster_coverage_time = 0
                     self.last_cluster_id = target_cluster.id
                     is_macro_switch = True
                 else:
-
-                    action = 0
-                    self.current_battery_capacity -= self.hover_power
+                    self.current_battery_capacity -= self.hover_energy
             else:
-                action = 0
-                self.current_battery_capacity -= self.hover_power
+                self.current_battery_capacity -= self.hover_energy
         else:
-            # 微观移动动作
+            # 微观动作
             if self.macro_fly_time > 0:
-                # 如果正在宏观飞行，不能执行微观动作
                 self.macro_fly_time -= 1
                 reward, covered, comm_quality = self.get_dqn_pk_reward(env, False)
-                done = False
-                return self.get_dqn_pk_state(env), reward, done, covered, comm_quality
+                return self.get_dqn_pk_state(env), reward, False, covered, comm_quality
 
-            if action == 0:
-                self.current_battery_capacity -= self.hover_power
-            elif action <= 4:
-                self.current_battery_capacity -= self.low_speed_power
-            else:
-                self.current_battery_capacity -= self.middle_speed_power
-            
-            self.position = np.array(self.position, dtype=np.float32)
+            self._deduct_energy(action)
             self.position += self.moves[action]
-            self.position = np.clip(self.position, 0, 15)
+            self.position = np.clip(self.position, 0.0, self.scene_size)
 
         reward, covered, comm_quality = self.get_dqn_pk_reward(env, is_macro_switch)
-        done = False
-        return self.get_dqn_pk_state(env), reward, done, covered, comm_quality
-
+        return self.get_dqn_pk_state(env), reward, False, covered, comm_quality

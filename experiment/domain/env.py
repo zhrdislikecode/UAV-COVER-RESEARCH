@@ -1,144 +1,148 @@
-from experiment.domain.cluster import *
-from experiment.domain.uav import *
+import numpy as np
 from sklearn.cluster import DBSCAN
+from experiment.domain.cluster import Cluster
+
 
 class Environment:
-    def __init__(self, slot, cluster_num, scene_size=15, cluster_radius=3, users_per_cluster=50, uav_num=2, uav_fly_multiple = 2):
+    """环境，仅管理用户和集群。每次 reset() 自动随机化配置。"""
+
+    # 预定义的兴趣点（固定不变）
+    INTEREST_POINTS = np.array([
+        [1, 1], [7, 1], [14, 1],
+        [1, 13], [7, 13], [14, 13],
+        [4, 5], [4, 9], [10, 5], [10, 9], [7, 7]
+    ], dtype=np.float64)
+
+    def __init__(self, slot, cluster_num, scene_size=15, cluster_radius=0.3,
+                 users_per_cluster=30):
         self.scene_size = scene_size
         self.slot = slot
-        self.uav_fly_multiple = uav_fly_multiple
-        # 定义用户的起点
-        self.cluster_centers = np.array([(1, 4), (4, 13), (7, 13), (10, 5), (14, 1), (7, 10), (4, 5), (3, 1)], dtype=np.float64)
-        # 定义兴趣点
-        self.interest_points = np.array([
-            [1, 1],  # 0
-            [7, 1],  # 1
-            [14, 1], # 2
-            [1, 13], # 3
-            [7, 13], # 4
-            [14, 13],# 5
-            [4, 5],  # 6
-            [4, 9],  # 7
-            [10, 5], # 8
-            [10, 9], # 9
-            [7, 7]   # 10
-        ])
-        # 定义集群的路径
-        self.paths = [
-            np.array([(1, 1), (14, 1), (14, 13)], dtype=np.float64),
-            np.array([(1, 13), (7, 13), (14, 13)], dtype=np.float64),
-            np.array([(14, 13), (14, 1)], dtype=np.float64),
-            np.array([(4, 9), (4, 5), (10, 5), (4, 9)], dtype=np.float64),
-            np.array([(10, 9), (4, 9), (10, 5)], dtype=np.float64),
-            np.array([(10, 5), (10, 9), (14, 13), (14, 1)], dtype=np.float64),
-            np.array([(7, 7), (7, 1), (1, 1), (1, 13)], dtype=np.float64),
-            np.array([(4, 9), (14, 1), (1, 1)], dtype=np.float64),
+        self.users_per_cluster = users_per_cluster
+        self.interest_points = self.INTEREST_POINTS.copy()
 
-        ]
-        # 初始化集群
+        if cluster_num >= len(self.interest_points):
+            raise ValueError(
+                f"集群数量 ({cluster_num}) 必须小于 POI 数量 ({len(self.interest_points)})"
+            )
+
+        # 创建集群占位
+        self.cluster_num = cluster_num
+        self.cluster_radius = cluster_radius
         self.clusters = []
         for i in range(cluster_num):
-            cluster = Cluster(self.cluster_centers[i], cluster_radius, users_per_cluster, slot)
-            cluster.center = self.cluster_centers[i].copy()
+            cluster = Cluster(np.zeros(2), cluster_radius, users_per_cluster, slot)
             cluster.id = i
-            cluster.path = self.paths[i]
             self.clusters.append(cluster)
-        # 初始化 UAV 集合
-        self.uavs = [UAV(uav_id=i + 1, slot=self.slot, multiple=uav_fly_multiple) for i in range(uav_num)]
 
-    def reset(self):
-        for cluster in self.clusters:
-            cluster.center = self.cluster_centers[cluster.id].copy()
+        # 自动随机化初始配置
+        self.randomize()
+
+    # ================================================================
+    #  随机化
+    # ================================================================
+    def randomize(self):
+        """随机分配集群起始 POI 和路径，强制执行无重叠同向约束"""
+        pois = self.interest_points
+        num_pois = len(pois)
+        cluster_num = self.cluster_num
+        radius = self.cluster_radius
+        rng = np.random
+
+        # 1. 每个集群选不同起始 POI
+        start_indices = rng.choice(num_pois, size=cluster_num, replace=False)
+
+        # 2. 生成满足约束的路径
+        paths = self._build_valid_paths(pois, start_indices, cluster_num, radius)
+
+        # 3. 更新集群
+        self.paths = paths
+        for i, cluster in enumerate(self.clusters):
+            cluster.center = paths[i][0].copy()
+            cluster.path = paths[i]
             cluster.path_index = 0
             cluster.score = 0
-            for i in range(len(cluster.users)):
-                cluster.users[i].position = np.array(cluster.initial_user_positions[i])
+            cluster.is_selected = False
+            cluster.users = cluster._initialize_users(self.users_per_cluster)
+            cluster.initial_user_positions = np.array(
+                [u.position.copy() for u in cluster.users], dtype=np.float32
+            )
 
-        for i, uav in enumerate(self.uavs):
-            uav.id = i + 1
-            uav.position = np.array([0, 0], dtype=np.float32)
-            uav.current_battery_capacity = uav.total_battery_capacity
-            uav.follow_cluster = None
-            uav.cluster_coverage_time = 0
-            uav.last_cluster_id = None
-            uav.macro_fly_time = 0
+        self._initial_state = self._capture_state()
+
+    def _build_valid_paths(self, pois, start_indices, cluster_num, radius):
+        """生成满足约束的路径集合"""
+        for _ in range(200):
+            paths = []
+            for i in range(cluster_num):
+                path_len = np.random.randint(2, min(6, len(pois)))
+                indices = [start_indices[i]]
+                for _ in range(path_len - 1):
+                    available = [j for j in range(len(pois)) if j != indices[-1]]
+                    indices.append(np.random.choice(available))
+                paths.append(pois[indices])
+            if self._paths_satisfy_constraints(paths, radius):
+                return paths
+        return paths
+
+    def _paths_satisfy_constraints(self, paths, radius):
+        """检查：任意两个集群不能同时重叠且同向"""
+        n = len(paths)
+        for i in range(n):
+            for j in range(i + 1, n):
+                dist = np.linalg.norm(paths[i][0] - paths[j][0])
+                if dist >= radius * 2:
+                    continue
+                d_i = paths[i][1] - paths[i][0]
+                d_j = paths[j][1] - paths[j][0]
+                n_i, n_j = np.linalg.norm(d_i), np.linalg.norm(d_j)
+                if n_i == 0 or n_j == 0:
+                    continue
+                if np.dot(d_i, d_j) / (n_i * n_j) > 0.95:
+                    return False
+        return True
+
+    # ================================================================
+    #  状态管理
+    # ================================================================
+    def _capture_state(self):
+        return [{
+            'center': c.center.copy(),
+            'path_index': c.path_index,
+            'score': c.score,
+            'is_selected': c.is_selected,
+            'user_positions': [u.position.copy() for u in c.users],
+            'user_cover_nums': [u.cover_num for u in c.users],
+        } for c in self.clusters]
+
+    def reset(self):
+        """重置为新的随机配置（每个 epoch 用户分布都不同）"""
+        self.randomize()
 
     def step(self, flag):
+        """推进一个时隙"""
         for cluster in self.clusters:
-            # 更新集群位置
             cluster.move(flag)
 
+    # ================================================================
+    #  工具方法
+    # ================================================================
     def perform_clustering(self):
-        all_positions = []
-        for cluster in self.clusters:
-            predicted_positions = np.array([user.position for user in cluster.users])
-            all_positions.append(predicted_positions)
-
-        all_positions = np.concatenate(all_positions, axis=0)
-
+        all_positions = np.concatenate(
+            [np.array([u.position for u in c.users]) for c in self.clusters], axis=0)
         dbscan = DBSCAN(eps=5.0, min_samples=2)
         labels = dbscan.fit_predict(all_positions)
-
-        cluster_centers = []
+        centers = []
         for label in np.unique(labels):
             if label == -1:
-                continue  # -1 是噪声点
-            cluster_points = all_positions[labels == label]
-            cluster_center = np.mean(cluster_points, axis=0)
-            cluster_centers.append(cluster_center)
+                continue
+            centers.append(np.mean(all_positions[labels == label], axis=0))
+        return np.array(centers)
 
-        return np.array(cluster_centers)
-
-    # 得到每个集群的score值集合
-    def get_all_cluster_scores(self):
-        scores = np.array([cluster.score for cluster in self.clusters])  # 获取每个集群的得分
-        return scores
-
-    # 得到无人机到各个簇心的距离，返回 m x n 的矩阵
-    # 输入聚类后的用户集群中心位置
-    def calculate_uav_to_cluster_distances(self, cluster_centers):
-        num_uavs = len(self.uavs)
-        num_clusters = cluster_centers.shape[0]
-        distances = np.zeros((num_uavs, num_clusters))
-        # 调度中心拿到无人机的位置
-        uav_positions = np.array([uav.get_position() for uav in self.uavs])
-        # 生成该矩阵
-        for i, uav_pos in enumerate(uav_positions):
-            for j in range(num_clusters):
-                # 将簇心从二维转换为三维，z = 0
-                cluster_center = np.array([cluster_centers[j][0], cluster_centers[j][1]])
-                distances[i, j] = np.linalg.norm(uav_pos - cluster_center)
-
-        return distances
-
-    def assign_uavs_to_clusters(self, assignment_vector, cluster_centers):
-        # 先把所有 cluster 状态重置
-        for cluster in self.clusters:
-            cluster.is_selected = False
-
-        # 遍历每个 UAV，根据 assignment_vector 更新状态
-        for uav_idx, cluster_id in enumerate(assignment_vector):
-            # 找到该 UAV 分配到的集群
-            assigned_cluster = self.clusters[cluster_id]
-            assigned_cluster.is_selected = True
-            assigned_cluster.score = 0
-
-            # 设置 UAV 的位置和绑定的集群
-            self.uavs[uav_idx].position = np.array([cluster_centers[cluster_id][0],
-                                                    cluster_centers[cluster_id][1]])
-            self.uavs[uav_idx].follow_cluster = assigned_cluster
-
-    def set_positions_from_array(self, user_positions, cluster_positions, cluster_directions):
-        for cluster_idx, cluster in enumerate(self.clusters):
-            # 设置 cluster 的中心点和方向
-            cluster.center = cluster_positions[cluster_idx]
-            cluster.direction = cluster_directions[cluster_idx]
-
-            # 设置 cluster 内用户的位置
-            for user_idx, user in enumerate(cluster.users):
-                # 这里需要用全局的 user index
-                global_user_idx = sum(len(c.users) for c in self.clusters[:cluster_idx]) + user_idx
-                user.position[:2] = user_positions[global_user_idx]
-
-    def get_all_uav_positions(self):
-        return np.array([uav.get_position()[:2] for uav in self.uavs], dtype=np.float64)
+    def set_positions_from_array(self, user_positions, cluster_positions,
+                                  cluster_directions):
+        for ci, cluster in enumerate(self.clusters):
+            cluster.center = cluster_positions[ci]
+            cluster.direction = cluster_directions[ci]
+            for ui, user in enumerate(cluster.users):
+                gidx = sum(len(c.users) for c in self.clusters[:ci]) + ui
+                user.position[:2] = user_positions[gidx]

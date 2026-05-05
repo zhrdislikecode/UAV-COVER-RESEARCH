@@ -41,11 +41,11 @@ def random_method(env):
             total_step += 1
             action = random.randint(0, len(uav.moves) - 1)
             if action == 0:
-                uav.current_battery_capacity -= uav.hover_power
+                uav.current_battery_capacity -= uav.hover_energy
             elif action <= 4:
-                uav.current_battery_capacity -= uav.low_speed_power
+                uav.current_battery_capacity -= uav.low_speed_energy
             else:
-                uav.current_battery_capacity -= uav.middle_speed_power
+                uav.current_battery_capacity -= uav.mid_speed_energy
             uav.position[:2] += uav.moves[action] * 10
             uav.position[:2] = np.clip(uav.position[:2], 1, 14)
             com = 0

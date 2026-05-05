@@ -4,7 +4,8 @@ from matplotlib import rcParams
 from experiment.config import EnvConfig, DQNConfig, TrainConfig
 from experiment.domain.env import Environment
 from experiment.domain.uav import UAV
-from experiment.algorithm.train import run_training
+from experiment.algorithm.train import (
+    run_training_dqn, run_training_ppo, run_training_ddpg)
 from experiment.algorithm.evaluate import run_evaluation
 
 np.random.seed(10)
@@ -50,7 +51,9 @@ def train(agent_type=AGENT_TYPE):
     agent = _create_agent(agent_type, dqn_config)
     print(f"Training with {agent_type.upper()} agent...")
 
-    run_training(env, uavs, agent, train_config)
+    train_funcs = {'dqn': run_training_dqn, 'ppo': run_training_ppo,
+                   'ddpg': run_training_ddpg}
+    train_funcs[agent_type](env, uavs, agent, train_config)
 
 
 def evaluate(agent_type=AGENT_TYPE):
@@ -72,10 +75,10 @@ def evaluate(agent_type=AGENT_TYPE):
 
 if __name__ == "__main__":
     # --- 训练 ---
-    # train('dqn')
+    train('dqn')
     # train('ppo')
     # train('ddpg')
-    evaluate('ppo')
+    # evaluate('ppo')
 
 
 

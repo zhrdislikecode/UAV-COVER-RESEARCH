@@ -177,6 +177,35 @@ class UAV:
         """扣除动作对应的能耗"""
         self.current_battery_capacity -= self._action_energy[action]
 
+    # ---- 连续动作（供 DDPG 使用） ----
+    def step_continuous(self, action_2d: np.ndarray):
+        """执行连续动作 (dx, dy) ∈ [-1, 1]×[-1, 1]，缩放后移动
+
+        Returns: (next_state, reward, done, covered_count, comm_quality)
+        """
+        old_position = self.position.copy()
+        step_mid = self.moves[5][0]  # 中速步长作为最大步长
+        move = np.clip(action_2d, -1.0, 1.0) * step_mid
+
+        # 能耗：根据移动距离判定
+        dist = float(np.linalg.norm(move))
+        if dist < 1e-6:
+            energy = self.hover_energy
+            equiv_action = self.ACTION_HOVER
+        elif dist <= step_mid * 0.5:
+            energy = self.low_speed_energy
+            equiv_action = 1
+        else:
+            energy = self.mid_speed_energy
+            equiv_action = 5
+
+        self.current_battery_capacity -= energy
+        self.position += move.astype(np.float32)
+        self.position = np.clip(self.position, 0.0, self.scene_size)
+
+        reward, covered, comm_quality = self._compute_reward(old_position, equiv_action)
+        return self.get_state(), reward, False, covered, comm_quality
+
     def _compute_reward(self, old_position: np.ndarray, action: int):
         """计算微观移动的奖励值"""
         if self.follow_cluster is None:

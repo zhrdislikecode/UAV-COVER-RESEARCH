@@ -115,8 +115,18 @@ class Environment:
         } for c in self.clusters]
 
     def reset(self):
-        """重置为新的随机配置（每个 epoch 用户分布都不同）"""
-        self.randomize()
+        """恢复到当前配置的初始状态（不重新随机化）"""
+        for i, cluster in enumerate(self.clusters):
+            if i >= len(self._initial_state):
+                break
+            saved = self._initial_state[i]
+            cluster.center = saved['center'].copy()
+            cluster.path_index = saved['path_index']
+            cluster.score = saved['score']
+            cluster.is_selected = saved['is_selected']
+            for j, user in enumerate(cluster.users):
+                user.position = saved['user_positions'][j].copy()
+                user.cover_num = saved['user_cover_nums'][j]
 
     def step(self, flag):
         """推进一个时隙"""

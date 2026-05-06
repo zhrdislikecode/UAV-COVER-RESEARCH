@@ -2,8 +2,18 @@ import numpy as np
 from experiment.domain.env import Environment
 from experiment.domain.uav import UAV
 from experiment.dqn import DQNAgent
+from experiment.ppo import make_ppo_state
+from experiment.ddpg import make_ddpg_state
 from experiment.utils import calculate_jain_index, plot_uav_trajectory_3d
-from experiment.algorithm.trigger import try_trigger_deployment
+from experiment.algorithm.trigger import try_trigger_deployment as _hungarian_trigger
+
+
+def _get_trigger_fn(use_gcn=False):
+    if use_gcn:
+        from experiment.algorithm.trigger_gcn import \
+            try_trigger_deployment_gcn
+        return try_trigger_deployment_gcn
+    return _hungarian_trigger
 
 
 def _create_agent(agent_type, dqn_config, model_path):
@@ -26,12 +36,14 @@ def _create_agent(agent_type, dqn_config, model_path):
 
 def run_evaluation(env_config, train_config, dqn_config,
                    model_path="models/drl_tpwsp_model.pth",
-                   agent_type='dqn', randomize=True):
+                   agent_type='dqn', randomize=True, use_gcn=False):
     """评估：随机化环境，加载模型，运行评估
 
     Args:
         agent_type: 'dqn' | 'ppo' | 'ddpg'
+        use_gcn: True=GCN 宏观调度, False=匈牙利（默认）
     """
+    trigger_fn = _get_trigger_fn(use_gcn)
     env = Environment(
         slot=env_config.slot, cluster_num=env_config.cluster_num,
         scene_size=env_config.scene_size, cluster_radius=env_config.cluster_radius,
@@ -74,7 +86,7 @@ def run_evaluation(env_config, train_config, dqn_config,
         for ci, c in enumerate(env.clusters):
             cluster_traj[step, ci] = c.center
 
-        deploy_idx, _ = try_trigger_deployment(
+        deploy_idx, _ = trigger_fn(
             env, uavs, step, deploy_idx, train_config
         )
 
@@ -87,7 +99,12 @@ def run_evaluation(env_config, train_config, dqn_config,
                 continue
             if uav.current_battery_capacity <= 0:
                 continue
-            state = uav.get_state()
+            if agent_type == 'ppo':
+                state = make_ppo_state(uav)
+            elif agent_type == 'ddpg':
+                state = make_ddpg_state(uav)
+            else:
+                state = uav.get_state()
             action = agent.choose_action(state)
 
             if continuous:

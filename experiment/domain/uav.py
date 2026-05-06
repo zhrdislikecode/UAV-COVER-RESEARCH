@@ -116,6 +116,7 @@ class UAV:
         # 动作对应的位移量（归一化单位）
         step_low = slot / 100.0
         step_mid = multiple * slot / 100.0
+        self.step_mid = step_mid          # 供 step_continuous 使用
         self.moves = np.array([
             [0.0, 0.0],            # 0: 悬停
             [0.0, step_low],       # 1: 北慢
@@ -184,7 +185,7 @@ class UAV:
         Returns: (next_state, reward, done, covered_count, comm_quality)
         """
         old_position = self.position.copy()
-        step_mid = self.moves[5][0]  # 中速步长作为最大步长
+        step_mid = self.step_mid  # 中速步长作为最大步长
         move = np.clip(action_2d, -1.0, 1.0) * step_mid
 
         # 能耗：根据移动距离判定

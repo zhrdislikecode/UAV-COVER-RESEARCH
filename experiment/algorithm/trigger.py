@@ -68,26 +68,87 @@ def compute_trigger_steps(env, uavs, user_positions, cluster_positions,
     return trigger_steps
 
 
-def try_trigger_deployment(env, uavs, step, deploy_idx, config):
+# ============================================================
+#  日志格式化
+# ============================================================
+def _fmt_vec(x, y):
+    return f"({x:5.1f},{y:5.1f})"
+
+
+def _log_cluster_state(clusters):
+    """打印集群状态"""
+    print("  Clusters:")
+    for c in clusters:
+        sel = "← SELECTED" if c.is_selected else ""
+        dir_x = c.direction[0] if c.direction is not None else 0.0
+        dir_y = c.direction[1] if c.direction is not None else 0.0
+        print(f"    C{c.id}: pos={_fmt_vec(c.center[0], c.center[1])}, "
+              f"score={c.score:5.1f}, dir={_fmt_vec(dir_x, dir_y)}  {sel}")
+
+
+def _log_benefit_matrix(distance_benefit, score_vec, weight, uavs, clusters, assignment):
+    """打印匈牙利 benefit 矩阵和分配结果"""
+    n_u, n_c = distance_benefit.shape
+    benefit = weight * score_vec + (1 - weight) * distance_benefit
+
+    # 表头
+    header = "        " + "".join(f"  C{j}   " for j in range(n_c))
+    print(f"  Benefit Matrix (w={weight}):")
+    print(header)
+    # 每行
+    for i in range(n_u):
+        row = f"  UAV{i}: "
+        for j in range(n_c):
+            marker = "*" if assignment[i] == j else " "
+            row += f"{benefit[i, j]:6.3f}{marker} "
+        uav_pos = uavs[i].position
+        row += f"  (UAV at {_fmt_vec(uav_pos[0], uav_pos[1])})"
+        print(row)
+
+    # 分配结果
+    assign_str = ", ".join(f"UAV{i}→C{assignment[i]}" for i in range(n_u))
+    print(f"  Assignment: {assign_str}")
+
+
+# ============================================================
+#  在线触发部署
+# ============================================================
+def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=True):
     """在线检查匈牙利触发条件，满足则分配并部署
+
+    Args:
+        verbose: True=打印宏观调控详细日志
 
     Returns: (new_deploy_idx, triggered)
     """
     cluster_centers = np.array([c.center for c in env.clusters])
     distance_matrix = calculate_uav_to_cluster_distances(uavs, cluster_centers)
-    distance_matrix = 1 - distance_matrix / distance_matrix.max(axis=1, keepdims=True)
+    distance_benefit = 1 - distance_matrix / distance_matrix.max(axis=1, keepdims=True)
     score_matrix = get_all_cluster_scores(env)
     if step != 0:
         score_matrix = score_matrix / score_matrix.max()
 
     hungarian = HungarianAssigner(
-        distance_matrix, score_matrix, step, config.step_change,
+        distance_benefit, score_matrix, step, config.step_change,
         config.weight, config.threshold
     )
 
     triggered = False
     if hungarian.should_assign():
         assign_vector = hungarian.assign()
+
+        if verbose:
+            n_triggered = deploy_idx + 1
+            print(f"\n{'═'*70}")
+            print(f"[Hungarian Trigger #{n_triggered}] Step={step}, "
+                  f"DeployIdx={deploy_idx}→{n_triggered}")
+            print(f"{'═'*70}")
+            _log_cluster_state(env.clusters)
+            print()
+            _log_benefit_matrix(distance_benefit, score_matrix, config.weight,
+                               uavs, env.clusters, assign_vector)
+            print(f"{'═'*70}\n")
+
         assign_uavs_to_clusters(env, uavs, assign_vector, cluster_centers)
         for u in uavs:
             u.follow_cluster_list.append(u.follow_cluster.id)

@@ -13,7 +13,7 @@ class Cluster:
         self.path = None
         self.path_index = 0
         self.speed = speed / 100
-        self.perturbation_probability = 0.1
+        self.perturbation_probability = 0.5
         self.direction = None
 
     def _initialize_users(self, users_per_cluster):

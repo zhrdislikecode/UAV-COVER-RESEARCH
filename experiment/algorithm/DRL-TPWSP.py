@@ -75,8 +75,8 @@ def evaluate(agent_type=AGENT_TYPE):
 
 if __name__ == "__main__":
     # --- 训练 ---
-    train('dqn')
-    # train('ppo')
+    # train('dqn')
+    train('ppo')
     # train('ddpg')
     # evaluate('ppo')
 

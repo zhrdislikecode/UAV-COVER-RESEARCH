@@ -35,7 +35,9 @@ def _get_macro_agent(model_path="models/macro_ddqn.pth"):
 
 def try_trigger_deployment_macro_ddqn(env, uavs, step, deploy_idx, config,
                                        model_path="models/macro_ddqn.pth",
-                                       verbose=True):
+                                       verbose=None):
+    if verbose is None:
+        verbose = getattr(config, 'verbose_trigger', False)
     agent = _get_macro_agent(model_path)
     triggered = False
     n_triggered = deploy_idx

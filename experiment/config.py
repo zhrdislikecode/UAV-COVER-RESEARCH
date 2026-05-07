@@ -41,6 +41,7 @@ class TrainConfig:
     train_freq_early: int = 1      # 前半段训练：每步训练
     train_freq_late: int = 5       # 后半段训练：每5步训练
     log_interval: int = 10         # 打印日志间隔
+    verbose_trigger: bool = False   # 是否打印匈牙利/GCN 触发日志
     rerandomize_interval: int = 100  # 每隔 N 轮重新随机化环境
 
     @property

@@ -15,16 +15,16 @@ def calculate_uav_to_cluster_distances(uavs, cluster_centers):
     return distances
 
 
-def assign_uavs_to_clusters(env, uavs, assignment_vector, cluster_centers):
+def assign_uavs_to_clusters(env, uavs, assignment_vector):
     for c in env.clusters:
         c.is_selected = False
     for uav_idx, cluster_id in enumerate(assignment_vector):
         c = env.clusters[cluster_id]
         c.is_selected = True
         c.score = 0
-        uavs[uav_idx].position = np.array(
-            [cluster_centers[cluster_id][0], cluster_centers[cluster_id][1]])
         uavs[uav_idx].follow_cluster = c
+        # 位置不在此设置，由 deploy_uavs_at_trigger_step 统一处理：
+        # 先按实际距离扣能耗，再瞬移到目标集群
 
 
 def deploy_uavs_at_trigger_step(env, uavs, deploy_idx):
@@ -59,7 +59,7 @@ def compute_trigger_steps(env, uavs, user_positions, cluster_positions,
         if hungarian.should_assign():
             trigger_steps.append(step)
             assign_vector = hungarian.assign()
-            assign_uavs_to_clusters(env, uavs, assign_vector, cluster_centers)
+            assign_uavs_to_clusters(env, uavs, assign_vector)
             for uav in uavs:
                 uav.follow_cluster_list.append(uav.follow_cluster.id)
         for cluster in env.clusters:
@@ -113,7 +113,7 @@ def _log_benefit_matrix(distance_benefit, score_vec, weight, uavs, clusters, ass
 # ============================================================
 #  在线触发部署
 # ============================================================
-def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=True):
+def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=None):
     """在线检查匈牙利触发条件，满足则分配并部署
 
     Args:
@@ -121,6 +121,8 @@ def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=True):
 
     Returns: (new_deploy_idx, triggered)
     """
+    if verbose is None:
+        verbose = getattr(config, 'verbose_trigger', False)
     cluster_centers = np.array([c.center for c in env.clusters])
     distance_matrix = calculate_uav_to_cluster_distances(uavs, cluster_centers)
     distance_benefit = 1 - distance_matrix / distance_matrix.max(axis=1, keepdims=True)
@@ -149,7 +151,7 @@ def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=True):
                                uavs, env.clusters, assign_vector)
             print(f"{'═'*70}\n")
 
-        assign_uavs_to_clusters(env, uavs, assign_vector, cluster_centers)
+        assign_uavs_to_clusters(env, uavs, assign_vector)
         for u in uavs:
             u.follow_cluster_list.append(u.follow_cluster.id)
         deploy_idx = deploy_uavs_at_trigger_step(env, uavs, deploy_idx)

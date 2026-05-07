@@ -8,7 +8,7 @@ from experiment.algorithm.train import (
     run_training_dqn, run_training_ppo, run_training_ddpg)
 from experiment.algorithm.evaluate import run_evaluation
 
-np.random.seed(10)
+np.random.seed(11)
 rcParams['font.sans-serif'] = ['SimHei']
 rcParams['axes.unicode_minus'] = False
 
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     # train('ppo', macro_scheduler='macro_ddqn')
 
     # --- 评估 ---
-    evaluate('ddpg', macro_scheduler='hungarian')
+    evaluate('ppo', macro_scheduler='hungarian')
 
 
 

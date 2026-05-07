@@ -85,7 +85,7 @@ def _log_gcn_scores(scores, uavs, clusters, hungarian_assign, gcn_assign, alpha=
 
 def try_trigger_deployment_gcn(env, uavs, step, deploy_idx, config,
                                 gcn_model_path="models/gcn_matcher.pth",
-                                verbose=True):
+                                verbose=None):
     """使用 GCN+Hungarian 进行 UAV-集群分配（触发条件沿用匈牙利逻辑）
 
     GCN 提供偏好评分，匈牙利算法在此基础上强制一对一约束。
@@ -102,6 +102,8 @@ def try_trigger_deployment_gcn(env, uavs, step, deploy_idx, config,
     Returns:
         (new_deploy_idx, triggered)
     """
+    if verbose is None:
+        verbose = getattr(config, 'verbose_trigger', False)
     cluster_centers = np.array([c.center for c in env.clusters])
     distance_matrix = calculate_uav_to_cluster_distances(uavs, cluster_centers)
     distance_benefit = 1 - distance_matrix / distance_matrix.max(
@@ -150,7 +152,7 @@ def try_trigger_deployment_gcn(env, uavs, step, deploy_idx, config,
                 print(f"  [DIFF] GCN diverges from Hungarian: {diff_str}")
             print(f"{'═'*70}\n")
 
-        assign_uavs_to_clusters(env, uavs, assign_vector, cluster_centers)
+        assign_uavs_to_clusters(env, uavs, assign_vector)
         for u in uavs:
             u.follow_cluster_list.append(u.follow_cluster.id)
         deploy_idx = deploy_uavs_at_trigger_step(env, uavs, deploy_idx)

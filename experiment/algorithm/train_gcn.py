@@ -119,7 +119,7 @@ def collect_training_data(num_episodes=300, save_path="models/gcn_training_data.
                 total_samples += 1
 
                 # 执行匈牙利分配（与 trigger.py 一致）
-                assign_uavs_to_clusters(env, uavs, assign_vector, cluster_centers)
+                assign_uavs_to_clusters(env, uavs, assign_vector)
                 for u in uavs:
                     u.follow_cluster_list.append(u.follow_cluster.id)
                 deploy_idx = deploy_uavs_at_trigger_step(env, uavs, deploy_idx)

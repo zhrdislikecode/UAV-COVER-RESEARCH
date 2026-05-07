@@ -24,17 +24,17 @@ def _get_trigger_fn(macro_scheduler='hungarian'):
     """
     if macro_scheduler == 'hungarian':
         return _hungarian_trigger
-    elif macro_scheduler == 'gcn':
-        from experiment.algorithm.trigger_gcn import \
-            try_trigger_deployment_gcn
-        return try_trigger_deployment_gcn
     elif macro_scheduler == 'macro_ddqn':
         from experiment.algorithm.trigger_macro_ddqn import \
             try_trigger_deployment_macro_ddqn
         return try_trigger_deployment_macro_ddqn
+    elif macro_scheduler == 'greedy':
+        from experiment.algorithm.trigger_greedy import \
+            try_trigger_deployment_greedy
+        return try_trigger_deployment_greedy
     else:
         raise ValueError(f"Unknown macro_scheduler: {macro_scheduler}, "
-                         f"choose from 'hungarian'|'gcn'|'macro_ddqn'")
+                         f"choose from 'hungarian'|'macro_ddqn'|'greedy'")
 
 
 # ============================================================

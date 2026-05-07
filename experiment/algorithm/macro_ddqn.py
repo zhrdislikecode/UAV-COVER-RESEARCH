@@ -1,11 +1,12 @@
 """
 宏观调度 DDQN — 分布式 UAV-集群切换
 
-每架 UAV 独立运行一个 DDQN 模型（同构共享参数），在决策步决定：
-  keep: 保持当前集群
-  switch-to-top-N: 切换到评分最高的 N 个候选集群之一
+每架 UAV 独立运行一个 DDQN 模型（同构共享参数），每 10 步决策：
+  keep: 保持当前集群（继续服务）
+  switch-to-top-N: 切换到匈牙利 benefit 评分最高的 N 个候选集群之一
 
-训练与现有 RL 完全解耦，不修改 trigger.py / train.py。
+State (15 维): top-3 候选 × 5 特征
+训练: 在线 epsilon-greedy，边仿真边学
 """
 import numpy as np
 import torch
@@ -17,14 +18,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ============================================================
 #  常量
 # ============================================================
-STATE_DIM = 33  # 5(self) + 3(sibling) + 1(same_count) + 3*8(top3)
-ACTION_DIM = 4          # keep, top-1, top-2, top-3
+STATE_DIM = 15     # top-3 × 5
+ACTION_DIM = 4     # keep, top-1, top-2, top-3
 TOP_K = 3
-
-# 候选评分权重
-W_WAIT = 0.4
-W_DIST = 0.4
-W_DENSITY = 0.2
+HUN_WEIGHT = 0.5   # 匈牙利权重（score vs distance）
 
 
 # ============================================================
@@ -44,118 +41,77 @@ class MacroQNet(nn.Module):
 
 
 # ============================================================
-#  状态构建
+#  状态构建（15 维：top-3 × 5 特征）
 # ============================================================
-def build_macro_state(uav, env, other_uavs,
-                      decision_interval=30, min_switch_interval=60,
-                      scene_size=15.0, max_vel=0.1):
-    """为单架 UAV 构建宏观调度状态向量 (32 维)
+def build_macro_state(uav, env, other_uavs, scene_size=15.0):
+    """构建宏观调度状态向量 (15 维)
 
-    Returns:
-        state: np.ndarray shape [STATE_DIM]
-        candidates: list of (cluster_id, score)  top-3 候选集群
+    候选评分 = 匈牙利 benefit: 0.5*score_norm + 0.5*dist_benefit
+    取 top-3（排除已被兄弟覆盖的集群，当前集群强制保留）
+
+    每个候选 5 维:
+      [0] score_norm        — 集群等待时间（归一化）
+      [1] dist_benefit      — 距离收益 = 1 - dist/max_dist_uav
+      [2] is_current        — 0/1，是否当前服务的集群
+      [3] covered_by_other  — 0/1，是否被其他 UAV 覆盖
+      [4] density_norm      — 用户密度（归一化）
     """
     clusters = env.clusters
-    n_clusters = len(clusters)
-    n_uavs = len(other_uavs) + 1
     uav_pos = uav.position[:2]
+    n_clusters = len(clusters)
 
-    # ── 候选评分（排除已被兄弟覆盖的集群）──
+    # ── 收集各集群指标 ──
+    dists = [float(np.linalg.norm(uav_pos - c.center[:2])) for c in clusters]
+    max_dist = max(max(dists), 1e-6)
+    max_score = max(max(c.score for c in clusters), 1.0)
+    max_users = max(max(len(c.users) for c in clusters), 1)
+
+    # 已被兄弟覆盖的集群
     covered_by_others = set()
     for other in other_uavs:
         if other.follow_cluster is not None and other.id != uav.id:
             covered_by_others.add(other.follow_cluster.id)
 
-    # 收集各集群的归一化指标
-    all_dists = []
-    scores_raw = []
-    for j, c in enumerate(clusters):
-        d = float(np.linalg.norm(uav_pos - c.center[:2]))
-        all_dists.append(d)
-    max_dist = max(max(all_dists), 1e-6)
-    max_score = max(max(c.score for c in clusters), 1.0)
-    max_users = max(max(len(c.users) for c in clusters), 1)
+    cur_id = uav.follow_cluster.id if uav.follow_cluster is not None else -1
 
+    # ── 候选评分 ──
+    scored = []
     for j, c in enumerate(clusters):
-        d = all_dists[j]
-        wait_norm = c.score / max_score
-        dist_norm = d / max_dist
+        score_norm = c.score / max_score
+        dist_benefit = 1.0 - dists[j] / max_dist
         density_norm = len(c.users) / max_users
-        score = W_WAIT * wait_norm + W_DIST * (1.0 - dist_norm) + W_DENSITY * density_norm
-        scores_raw.append((j, score, d, wait_norm, dist_norm, density_norm))
+        benefit = HUN_WEIGHT * score_norm + (1 - HUN_WEIGHT) * dist_benefit
+        covered = 1.0 if j in covered_by_others else 0.0
+        scored.append((j, benefit, score_norm, dist_benefit, covered, density_norm))
 
-    # 排除已被覆盖 vs 自己当前集群
+    # ── 选 top-3（当前集群强制保留）──
     candidates = []
-    if uav.follow_cluster is not None:
-        cur_id = uav.follow_cluster.id
-        # 当前集群一定在候选里
-        for j, s, d, wn, dn, den in scores_raw:
-            if j == cur_id:
-                candidates.append((j, s, d, wn, dn, den))
+    if cur_id >= 0:
+        for item in scored:
+            if item[0] == cur_id:
+                candidates.append(item)
                 break
-
-    for j, s, d, wn, dn, den in scores_raw:
-        if j not in covered_by_others and not any(c[0] == j for c in candidates):
-            candidates.append((j, s, d, wn, dn, den))
-
-    # 按分数排序，取 top-3
+    for item in scored:
+        if item[0] not in [c[0] for c in candidates]:
+            candidates.append(item)
     candidates.sort(key=lambda x: x[1], reverse=True)
     top3 = candidates[:TOP_K]
 
-    # 补足到 3 个（集群数可能不够）
+    # 补足到 3 个
     while len(top3) < TOP_K:
-        # 填充虚拟候选
-        top3.append((-1, -999.0, 0.0, 0.0, 0.0, 0.0))
+        top3.append((-1, -999., 0., 0., 0., 0.))
 
-    # ── 构建状态 ──
+    # ── 构建 state ──
     state = np.zeros(STATE_DIM, dtype=np.float32)
+    for k, (cid, benefit, sn, db, cov, den) in enumerate(top3):
+        base = k * 5
+        state[base + 0] = sn          # score_norm
+        state[base + 1] = db          # dist_benefit
+        state[base + 2] = 1.0 if cid == cur_id else 0.0  # is_current
+        state[base + 3] = cov         # covered_by_other
+        state[base + 4] = den         # density_norm
 
-    # 自身 (5)
-    state[0] = uav.position[0] / scene_size
-    state[1] = uav.position[1] / scene_size
-    state[2] = uav.current_battery_capacity / max(uav.total_battery_capacity, 1e-6)
-    state[3] = (uav.follow_cluster.id / 10.0
-                if uav.follow_cluster is not None else -0.1)
-    state[4] = min(uav.steps_since_last_switch / max(min_switch_interval, 1), 1.0) \
-        if hasattr(uav, 'steps_since_last_switch') else 0.0
-
-    # 兄弟 UAV 分配 (3)
-    idx = 5
-    for other in other_uavs:
-        if other.id != uav.id:
-            state[idx] = (other.follow_cluster.id / 10.0
-                          if other.follow_cluster is not None else -0.1)
-            idx += 1
-            if idx >= 8:
-                break
-    # 与自己同集群的 UAV 数
-    same_count = 0
-    if uav.follow_cluster is not None:
-        for other in other_uavs:
-            if (other.id != uav.id and other.follow_cluster is not None
-                    and other.follow_cluster.id == uav.follow_cluster.id):
-                same_count += 1
-    state[8] = same_count / max(n_uavs, 1)
-
-    # Top-3 候选集群 × 8 = 24
-    base = 9
-    for k, (cid, score, dist, wn, dn, den) in enumerate(top3):
-        if cid >= 0:
-            c = clusters[cid]
-            state[base + k*8 + 0] = (c.center[0] - uav_pos[0]) / scene_size  # rel_x
-            state[base + k*8 + 1] = (c.center[1] - uav_pos[1]) / scene_size  # rel_y
-            dir_x = c.direction[0] if c.direction is not None else 0.0
-            dir_y = c.direction[1] if c.direction is not None else 0.0
-            state[base + k*8 + 2] = dir_x / max_vel
-            state[base + k*8 + 3] = dir_y / max_vel
-            state[base + k*8 + 4] = wn       # wait_norm
-            state[base + k*8 + 5] = dn       # dist_norm
-            state[base + k*8 + 6] = den      # density_norm
-            state[base + k*8 + 7] = 1.0 if (uav.follow_cluster is not None
-                                           and uav.follow_cluster.id == cid) else 0.0
-        # 虚拟候选保持 0
-
-    return state, top3
+    return np.nan_to_num(state, nan=0.0), top3
 
 
 # ============================================================
@@ -179,9 +135,9 @@ class MacroAgent:
     """宏观调度 DDQN Agent（Double DQN + 经验回放）"""
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
-                 lr=1e-3, gamma=0.99, epsilon_start=1.0, epsilon_end=0.01,
+                 lr=1e-3, gamma=0.99, epsilon_start=1.0, epsilon_end=0.05,
                  epsilon_decay=0.995, batch_size=128, memory_size=50000,
-                 target_update_interval=100, hidden=128):
+                 target_update_interval=100, hidden=128, reward_clip=100.0):
         self.state_dim = state_dim
         self.action_dim = action_dim
         self.gamma = gamma
@@ -190,6 +146,7 @@ class MacroAgent:
         self.epsilon_end = epsilon_end
         self.epsilon_decay = epsilon_decay
         self.target_update_interval = target_update_interval
+        self.reward_clip = reward_clip
 
         self.q_net = MacroQNet(state_dim, action_dim, hidden).to(device)
         self.target_net = MacroQNet(state_dim, action_dim, hidden).to(device)
@@ -201,7 +158,6 @@ class MacroAgent:
         self.train_step_count = 0
 
     def choose_action(self, state, training=True):
-        """epsilon-greedy 选动作"""
         if training and np.random.random() < self.epsilon:
             return np.random.randint(0, self.action_dim)
         state_t = torch.FloatTensor(state).unsqueeze(0).to(device)
@@ -210,9 +166,10 @@ class MacroAgent:
         return q_values.argmax(dim=1).item()
 
     def store_transition(self, state, action, reward, next_state, done):
+        r = float(np.clip(reward, -self.reward_clip, self.reward_clip))
         if len(self.buffer) >= self.memory_size:
             self.buffer.pop(0)
-        self.buffer.append((state, action, reward, next_state, done))
+        self.buffer.append((state, action, r, next_state, done))
 
     def train(self):
         if len(self.buffer) < self.batch_size:
@@ -228,13 +185,18 @@ class MacroAgent:
         next_states_t = torch.FloatTensor(np.array(next_states)).to(device)
         dones_t = torch.FloatTensor(dones).unsqueeze(1).to(device)
 
-        # Double DQN
-        q_values = self.q_net(states_t).gather(1, actions_t)
-        next_actions = self.q_net(next_states_t).argmax(1).unsqueeze(1)
-        next_q = self.target_net(next_states_t).gather(1, next_actions)
-        target_q = rewards_t + (1 - dones_t) * self.gamma * next_q
+        with torch.no_grad():
+            next_actions = self.q_net(next_states_t).argmax(1).unsqueeze(1)
+            next_q = self.target_net(next_states_t).gather(1, next_actions)
+            target_q = rewards_t + (1 - dones_t) * self.gamma * next_q
+        target_q = torch.clamp(target_q, -self.reward_clip * 2, self.reward_clip * 2)
 
-        loss = nn.MSELoss()(q_values, target_q.detach())
+        q_values = self.q_net(states_t).gather(1, actions_t)
+        loss = nn.MSELoss()(q_values, target_q)
+
+        if torch.isnan(loss) or torch.isinf(loss):
+            return None
+
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 1.0)
@@ -244,10 +206,15 @@ class MacroAgent:
         if self.train_step_count % self.target_update_interval == 0:
             self.target_net.load_state_dict(self.q_net.state_dict())
 
-        # Epsilon decay
-        self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_end)
+        with torch.no_grad():
+            mean_q = q_values.mean().item()
+            max_q = q_values.max().item()
 
-        return loss.item()
+        return {'loss': loss.item(), 'mean_q': mean_q, 'max_q': max_q,
+                'target_q_mean': target_q.mean().item()}
+
+    def decay_epsilon(self):
+        self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_end)
 
     def save_model(self, path):
         torch.save({

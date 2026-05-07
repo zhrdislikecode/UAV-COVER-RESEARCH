@@ -9,13 +9,32 @@ from experiment.ddpg import make_ddpg_state
 # ============================================================
 #  宏观调度选择
 # ============================================================
-def _get_trigger_fn(use_gcn=False):
-    """根据参数返回匈牙利或 GCN 触发函数"""
-    if use_gcn:
+_SCHEDULER_MAP = {
+    'hungarian':  None,  # 用默认的 _hungarian_trigger
+    'gcn':         None,  # 懒加载
+    'macro_ddqn':  None,
+}
+
+
+def _get_trigger_fn(macro_scheduler='hungarian'):
+    """根据参数返回触发函数
+
+    Args:
+        macro_scheduler: 'hungarian' | 'gcn' | 'macro_ddqn'
+    """
+    if macro_scheduler == 'hungarian':
+        return _hungarian_trigger
+    elif macro_scheduler == 'gcn':
         from experiment.algorithm.trigger_gcn import \
             try_trigger_deployment_gcn
         return try_trigger_deployment_gcn
-    return _hungarian_trigger
+    elif macro_scheduler == 'macro_ddqn':
+        from experiment.algorithm.trigger_macro_ddqn import \
+            try_trigger_deployment_macro_ddqn
+        return try_trigger_deployment_macro_ddqn
+    else:
+        raise ValueError(f"Unknown macro_scheduler: {macro_scheduler}, "
+                         f"choose from 'hungarian'|'gcn'|'macro_ddqn'")
 
 
 # ============================================================
@@ -61,8 +80,8 @@ def _log_episode(episode, agent, total_covered, total_com, covered_rate, jain_in
 # ============================================================
 #  DQN 训练
 # ============================================================
-def run_training_dqn(env, uavs, agent, config, save_dir="models", use_gcn=False):
-    trigger_fn = _get_trigger_fn(use_gcn)
+def run_training_dqn(env, uavs, agent, config, save_dir="models", macro_scheduler='hungarian'):
+    trigger_fn = _get_trigger_fn(macro_scheduler)
     covered_rate_list, total_com_list, jain_index_list = [], [], []
 
     for episode in range(1, config.episodes - 1):
@@ -83,6 +102,8 @@ def run_training_dqn(env, uavs, agent, config, save_dir="models", use_gcn=False)
                 env, uavs, step, deploy_idx, config)
 
             for uav in uavs:
+                if hasattr(uav, 'steps_since_last_switch'):
+                    uav.steps_since_last_switch += 1
                 if uav.macro_fly_time > 0:
                     uav.macro_fly_time -= 1
                     continue
@@ -134,8 +155,8 @@ def run_training_dqn(env, uavs, agent, config, save_dir="models", use_gcn=False)
 # ============================================================
 #  PPO 训练
 # ============================================================
-def run_training_ppo(env, uavs, agent, config, save_dir="models", use_gcn=False):
-    trigger_fn = _get_trigger_fn(use_gcn)
+def run_training_ppo(env, uavs, agent, config, save_dir="models", macro_scheduler='hungarian'):
+    trigger_fn = _get_trigger_fn(macro_scheduler)
     covered_rate_list, total_com_list, jain_index_list = [], [], []
 
     for episode in range(1, config.episodes - 1):
@@ -208,8 +229,8 @@ def run_training_ppo(env, uavs, agent, config, save_dir="models", use_gcn=False)
 # ============================================================
 #  DDPG 训练
 # ============================================================
-def run_training_ddpg(env, uavs, agent, config, save_dir="models", use_gcn=False):
-    trigger_fn = _get_trigger_fn(use_gcn)
+def run_training_ddpg(env, uavs, agent, config, save_dir="models", macro_scheduler='hungarian'):
+    trigger_fn = _get_trigger_fn(macro_scheduler)
     covered_rate_list, total_com_list, jain_index_list = [], [], []
 
     for episode in range(1, config.episodes - 1):
@@ -230,6 +251,8 @@ def run_training_ddpg(env, uavs, agent, config, save_dir="models", use_gcn=False
                 env, uavs, step, deploy_idx, config)
 
             for uav in uavs:
+                if hasattr(uav, 'steps_since_last_switch'):
+                    uav.steps_since_last_switch += 1
                 if uav.macro_fly_time > 0:
                     uav.macro_fly_time -= 1
                     continue
@@ -284,11 +307,11 @@ def run_training_ddpg(env, uavs, agent, config, save_dir="models", use_gcn=False
 # ============================================================
 #  统一入口（向后兼容）
 # ============================================================
-def run_training(env, uavs, agent, config, save_dir="models", use_gcn=False):
+def run_training(env, uavs, agent, config, save_dir="models", macro_scheduler='hungarian'):
     at = _agent_type(agent)
     if at == 'ppo':
-        return run_training_ppo(env, uavs, agent, config, save_dir, use_gcn=use_gcn)
+        return run_training_ppo(env, uavs, agent, config, save_dir, macro_scheduler=macro_scheduler)
     elif at == 'ddpg':
-        return run_training_ddpg(env, uavs, agent, config, save_dir, use_gcn=use_gcn)
+        return run_training_ddpg(env, uavs, agent, config, save_dir, macro_scheduler=macro_scheduler)
     else:
-        return run_training_dqn(env, uavs, agent, config, save_dir, use_gcn=use_gcn)
+        return run_training_dqn(env, uavs, agent, config, save_dir, macro_scheduler=macro_scheduler)

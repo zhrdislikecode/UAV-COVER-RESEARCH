@@ -34,12 +34,12 @@ def _create_agent(agent_type, dqn_config):
         )
 
 
-def train(agent_type=AGENT_TYPE, use_gcn=False):
+def train(agent_type=AGENT_TYPE, macro_scheduler='hungarian'):
     """训练模式：每轮随机化环境 → 训练 → 保存模型
 
     Args:
         agent_type: 'dqn' | 'ppo' | 'ddpg'
-        use_gcn: True=GCN 宏观调度, False=匈牙利（默认）
+        macro_scheduler: 'hungarian' | 'gcn' | 'macro_ddqn'
     """
     env_config = EnvConfig()
     dqn_config = DQNConfig()
@@ -54,20 +54,19 @@ def train(agent_type=AGENT_TYPE, use_gcn=False):
             for i in range(env_config.uav_num)]
 
     agent = _create_agent(agent_type, dqn_config)
-    assigner_name = "GCN" if use_gcn else "Hungarian"
-    print(f"Training with {agent_type.upper()} agent + {assigner_name} macro scheduler...")
+    print(f"Training with {agent_type.upper()} agent + {macro_scheduler} macro scheduler...")
 
     train_funcs = {'dqn': run_training_dqn, 'ppo': run_training_ppo,
                    'ddpg': run_training_ddpg}
-    train_funcs[agent_type](env, uavs, agent, train_config, use_gcn=use_gcn)
+    train_funcs[agent_type](env, uavs, agent, train_config, macro_scheduler=macro_scheduler)
 
 
-def evaluate(agent_type=AGENT_TYPE, use_gcn=False):
+def evaluate(agent_type=AGENT_TYPE, macro_scheduler='hungarian'):
     """评估模式：随机化环境 → 加载模型 → 评估
 
     Args:
         agent_type: 'dqn' | 'ppo' | 'ddpg'
-        use_gcn: True=GCN 宏观调度, False=匈牙利（默认）
+        macro_scheduler: 'hungarian' | 'gcn' | 'macro_ddqn'
     """
     env_config = EnvConfig()
     dqn_config = DQNConfig()
@@ -80,23 +79,25 @@ def evaluate(agent_type=AGENT_TYPE, use_gcn=False):
     value, total_com, jain_index = run_evaluation(
         env_config, train_config, dqn_config,
         model_path=model_path, randomize=True, agent_type=agent_type,
-        use_gcn=use_gcn,
+        macro_scheduler=macro_scheduler,
     )
     return value, total_com, jain_index
 
 
 if __name__ == "__main__":
     # --- 训练（匈牙利调度）---
-    # train('dqn')
-    # train('ppo')
-    # train('ddpg')
+    # train('dqn', macro_scheduler='hungarian')
+    # train('ppo', macro_scheduler='hungarian')
+    # train('ddpg', macro_scheduler='hungarian')
 
     # --- 训练（GCN 调度，需先运行 train_gcn.py）---
-    # train('ppo', use_gcn=True)
+    # train('ppo', macro_scheduler='gcn')
+
+    # --- 训练（Macro DDQN 调度，需先运行 train_macro_ddqn.py）---
+    # train('ppo', macro_scheduler='macro_ddqn')
 
     # --- 评估 ---
-    # evaluate('ddpg')
-    evaluate('ddpg', use_gcn=True)  # use_gcn=True 使用 GCN 调度
+    evaluate('ddpg', macro_scheduler='hungarian')
 
 
 

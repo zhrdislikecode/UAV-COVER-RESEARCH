@@ -8,12 +8,19 @@ from experiment.utils import calculate_jain_index, plot_uav_trajectory_3d
 from experiment.algorithm.trigger import try_trigger_deployment as _hungarian_trigger
 
 
-def _get_trigger_fn(use_gcn=False):
-    if use_gcn:
+def _get_trigger_fn(macro_scheduler='hungarian'):
+    if macro_scheduler == 'hungarian':
+        return _hungarian_trigger
+    elif macro_scheduler == 'gcn':
         from experiment.algorithm.trigger_gcn import \
             try_trigger_deployment_gcn
         return try_trigger_deployment_gcn
-    return _hungarian_trigger
+    elif macro_scheduler == 'macro_ddqn':
+        from experiment.algorithm.trigger_macro_ddqn import \
+            try_trigger_deployment_macro_ddqn
+        return try_trigger_deployment_macro_ddqn
+    else:
+        raise ValueError(f"Unknown macro_scheduler: {macro_scheduler}")
 
 
 def _create_agent(agent_type, dqn_config, model_path):
@@ -36,14 +43,14 @@ def _create_agent(agent_type, dqn_config, model_path):
 
 def run_evaluation(env_config, train_config, dqn_config,
                    model_path="models/drl_tpwsp_model.pth",
-                   agent_type='dqn', randomize=True, use_gcn=False):
+                   agent_type='dqn', randomize=True, macro_scheduler='hungarian'):
     """评估：随机化环境，加载模型，运行评估
 
     Args:
         agent_type: 'dqn' | 'ppo' | 'ddpg'
-        use_gcn: True=GCN 宏观调度, False=匈牙利（默认）
+        macro_scheduler: 'hungarian' | 'gcn' | 'macro_ddqn'
     """
-    trigger_fn = _get_trigger_fn(use_gcn)
+    trigger_fn = _get_trigger_fn(macro_scheduler)
     env = Environment(
         slot=env_config.slot, cluster_num=env_config.cluster_num,
         scene_size=env_config.scene_size, cluster_radius=env_config.cluster_radius,
@@ -94,6 +101,8 @@ def run_evaluation(env_config, train_config, dqn_config,
         for i, uav in enumerate(uavs):
             uav_position[step][i] = (uav.follow_cluster.center
                                      if uav.follow_cluster else uav.position)
+            if hasattr(uav, 'steps_since_last_switch'):
+                uav.steps_since_last_switch += 1
             if uav.macro_fly_time > 0:
                 uav.macro_fly_time -= 1
                 continue

@@ -112,7 +112,7 @@ def run_random_baseline(randomize=True, seed=None):
             total_com += com
 
     jain_index = calculate_jain_index(env, total_step)
-    plot_uav_trajectory_3d(uav_position, cluster_traj)
+    plot_uav_trajectory_3d(uav_position, cluster_traj, pois=env.interest_points)
 
     value = jain_index * total_com
     print(f"Random baseline: value={value:.4f}, total_com={total_com:.4f}, "

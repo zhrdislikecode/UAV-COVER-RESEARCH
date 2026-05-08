@@ -3,7 +3,8 @@ from matplotlib import font_manager
 import numpy as np
 from scipy.interpolate import make_interp_spline
 
-def plot_uav_trajectory_3d(uav_position, cluster_position, uav_height=10, smooth=True, dash_interval=30):
+def plot_uav_trajectory_3d(uav_position, cluster_position, uav_height=10,
+                           smooth=True, dash_interval=30, pois=None):
     font = font_manager.FontProperties(family='Arial', weight='bold', size=16)
 
     uav_position[:, :, 0:2] *= 100
@@ -91,6 +92,11 @@ def plot_uav_trajectory_3d(uav_position, cluster_position, uav_height=10, smooth
                 uy = cy + np.random.uniform(-user_range, user_range, num_users_per_cluster)
                 uz = np.zeros(num_users_per_cluster)
                 ax.scatter(ux, uy, uz, color='k', marker='o', s=1, alpha=0.6)
+
+    if pois is not None:
+        for px, py in pois:
+            ax.scatter(px * 100, py * 100, 0,
+                      c='red', marker='x', s=80, linewidths=2)
 
     ax.set_xlabel("X", fontsize=14)
     ax.set_ylabel("Y", fontsize=14)

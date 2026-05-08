@@ -128,7 +128,7 @@ def run_evaluation(env_config, train_config, dqn_config,
             total_com += com
 
     jain_index = calculate_jain_index(env, total_step)
-    plot_uav_trajectory_3d(uav_position, cluster_traj)
+    plot_uav_trajectory_3d(uav_position, cluster_traj, pois=env.interest_points)
 
     print(f"Evaluation result: value={jain_index * total_com:.4f}, "
           f"total_com={total_com:.4f}, jain_index={jain_index:.4f}")

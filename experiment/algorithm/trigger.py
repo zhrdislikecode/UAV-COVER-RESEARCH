@@ -51,7 +51,7 @@ def compute_trigger_steps(env, uavs, user_positions, cluster_positions,
         distance_matrix = 1 - distance_matrix / distance_matrix.max(axis=1, keepdims=True)
         score_matrix = get_all_cluster_scores(env)
         if step != 0:
-            score_matrix = score_matrix / score_matrix.max()
+            score_matrix = score_matrix / max(score_matrix.max(), 1.0)
         hungarian = HungarianAssigner(
             distance_matrix, score_matrix, step, config.step_change,
             config.weight, config.threshold
@@ -128,7 +128,7 @@ def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=None):
     distance_benefit = 1 - distance_matrix / distance_matrix.max(axis=1, keepdims=True)
     score_matrix = get_all_cluster_scores(env)
     if step != 0:
-        score_matrix = score_matrix / score_matrix.max()
+        score_matrix = score_matrix / max(score_matrix.max(), 1.0)
 
     hungarian = HungarianAssigner(
         distance_benefit, score_matrix, step, config.step_change,

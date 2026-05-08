@@ -20,6 +20,7 @@ class HungarianAssigner:
     def assign(self):
         m, n = self.distance_matrix.shape
         benefit_matrix = self.weight * self.score_matrix + (1 - self.weight) * self.distance_matrix
+        benefit_matrix = np.nan_to_num(benefit_matrix, nan=0.0, posinf=0.0, neginf=0.0)
         cost_matrix = -benefit_matrix
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
         assignment_vector = -np.ones(m, dtype=int)

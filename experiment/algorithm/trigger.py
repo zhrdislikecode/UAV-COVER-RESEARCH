@@ -137,17 +137,17 @@ def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=True):
     if hungarian.should_assign():
         assign_vector = hungarian.assign()
 
-        if verbose:
-            n_triggered = deploy_idx + 1
-            print(f"\n{'═'*70}")
-            print(f"[Hungarian Trigger #{n_triggered}] Step={step}, "
-                  f"DeployIdx={deploy_idx}→{n_triggered}")
-            print(f"{'═'*70}")
-            _log_cluster_state(env.clusters)
-            print()
-            _log_benefit_matrix(distance_benefit, score_matrix, config.weight,
-                               uavs, env.clusters, assign_vector)
-            print(f"{'═'*70}\n")
+        # if verbose:
+        #     n_triggered = deploy_idx + 1
+        #     print(f"\n{'═'*70}")
+        #     print(f"[Hungarian Trigger #{n_triggered}] Step={step}, "
+        #           f"DeployIdx={deploy_idx}→{n_triggered}")
+        #     print(f"{'═'*70}")
+        #     _log_cluster_state(env.clusters)
+        #     print()
+        #     _log_benefit_matrix(distance_benefit, score_matrix, config.weight,
+        #                        uavs, env.clusters, assign_vector)
+        #     print(f"{'═'*70}\n")
 
         assign_uavs_to_clusters(env, uavs, assign_vector, cluster_centers)
         for u in uavs:

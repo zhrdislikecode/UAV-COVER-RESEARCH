@@ -16,8 +16,8 @@ def plot_uav_trajectory_3d(uav_position, cluster_position, uav_height=10,
     ax = fig.add_subplot(111, projection='3d')
 
     # 颜色映射#1f77b4
-    uav_colors = ['red', '#1f77b4', '#9467bd', '#8c564b', '#7f7f7f']
-    cluster_colors = ['#ff69b4', 'orange', 'purple', '#2ca02c', 'gray']
+    uav_colors = ['blue', 'red', '#1f77b4', '#9467bd', '#7f7f7f']
+    cluster_colors = ['#2ca02c', '#ff69b4', 'orange', 'purple', 'gray']
 
     # ---------- 绘制无人机轨迹 ----------
     coverage_radius = 100  # UAV 覆盖半径

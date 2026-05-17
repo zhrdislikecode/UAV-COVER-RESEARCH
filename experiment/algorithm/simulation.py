@@ -84,9 +84,9 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("-n", "--runs", type=int, default=5)
-    parser.add_argument("-c", "--clusters", type=int, default=10)
+    parser.add_argument("-c", "--clusters", type=int, default=1)
     parser.add_argument("-u", "--users", type=int, default=30)
-    parser.add_argument("-v", "--uavs", type=int, default=5)
+    parser.add_argument("-v", "--uavs", type=int, default=1)
     parser.add_argument("-t", "--steps", type=int, default=450)
     parser.add_argument("-s", "--scheduler", type=str, default="hungarian")
     args = parser.parse_args()

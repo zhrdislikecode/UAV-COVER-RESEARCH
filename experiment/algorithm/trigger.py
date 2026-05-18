@@ -22,17 +22,21 @@ def assign_uavs_to_clusters(env, uavs, assignment_vector):
         c = env.clusters[cluster_id]
         c.is_selected = True
         c.score = 0
+        uavs[uav_idx].position = np.array([c.center[0], c.center[1]])
         uavs[uav_idx].follow_cluster = c
-        # 位置不在此设置，由 deploy_uavs_at_trigger_step 统一处理：
-        # 先按实际距离扣能耗，再瞬移到目标集群
 
 
-def deploy_uavs_at_trigger_step(env, uavs, deploy_idx):
+def deploy_uavs_at_trigger_step(env, uavs, deploy_idx, training=False):
     for uav in uavs:
         target = env.clusters[uav.follow_cluster_list[deploy_idx]]
         move_dis = np.linalg.norm(target.center - uav.position)
-        uav.macro_fly_time = int(move_dis * 100 / (20 * env.slot))
-        uav.current_battery_capacity -= uav.macro_fly_time * uav.high_speed_energy
+        if np.isnan(move_dis) or np.isinf(move_dis):
+            move_dis = 0.0
+        if training:
+            uav.macro_fly_time = 0
+        else:
+            uav.macro_fly_time = int(move_dis * 100 / (20 * env.slot))
+            uav.current_battery_capacity -= uav.macro_fly_time * uav.high_speed_energy
         uav.follow_cluster = target
         uav.position = np.array([target.center[0], target.center[1]])
     return deploy_idx + 1
@@ -113,11 +117,13 @@ def _log_benefit_matrix(distance_benefit, score_vec, weight, uavs, clusters, ass
 # ============================================================
 #  在线触发部署
 # ============================================================
-def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=None):
+def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=None,
+                            training=False):
     """在线检查匈牙利触发条件，满足则分配并部署
 
     Args:
         verbose: True=打印宏观调控详细日志
+        training: True=瞬移不扣能, False=计算飞行距离和能耗
 
     Returns: (new_deploy_idx, triggered)
     """
@@ -154,7 +160,8 @@ def try_trigger_deployment(env, uavs, step, deploy_idx, config, verbose=None):
         assign_uavs_to_clusters(env, uavs, assign_vector)
         for u in uavs:
             u.follow_cluster_list.append(u.follow_cluster.id)
-        deploy_idx = deploy_uavs_at_trigger_step(env, uavs, deploy_idx)
+        deploy_idx = deploy_uavs_at_trigger_step(env, uavs, deploy_idx,
+                                                  training=training)
         triggered = True
 
     # 未选中集群分值累加

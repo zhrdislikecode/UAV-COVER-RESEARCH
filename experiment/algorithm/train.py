@@ -17,13 +17,11 @@ _SCHEDULER_MAP = {
 
 
 def _get_trigger_fn(macro_scheduler='hungarian'):
-    """根据参数返回触发函数
-
-    Args:
-        macro_scheduler: 'hungarian' | 'gcn' | 'macro_ddqn'
-    """
+    """根据参数返回触发函数（训练时自动注入 training=True）"""
     if macro_scheduler == 'hungarian':
-        return _hungarian_trigger
+        base_fn = _hungarian_trigger
+        return lambda env, uavs, step, d_idx, cfg: \
+            base_fn(env, uavs, step, d_idx, cfg, training=True)
     elif macro_scheduler == 'macro_ddqn':
         from experiment.algorithm.trigger_macro_ddqn import \
             try_trigger_deployment_macro_ddqn

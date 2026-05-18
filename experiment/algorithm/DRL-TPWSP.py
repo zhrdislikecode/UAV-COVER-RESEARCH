@@ -86,7 +86,7 @@ def evaluate(agent_type=AGENT_TYPE, macro_scheduler='hungarian'):
 
 if __name__ == "__main__":
     # --- 训练（匈牙利调度）---
-    # train('dqn', macro_scheduler='hungarian')
+    train('dqn', macro_scheduler='hungarian')
     # train('ppo', macro_scheduler='hungarian')
     # train('ddpg', macro_scheduler='hungarian')
 

@@ -62,10 +62,7 @@ class Environment:
             cluster.path_index = 0
             cluster.score = 0
             cluster.is_selected = False
-            n_users = np.random.randint(
-                max(1, int(self.users_per_cluster * 0.3)),
-                self.users_per_cluster + 1)
-            cluster.users = cluster._initialize_users(n_users)
+            cluster.users = cluster._initialize_users(self.users_per_cluster)
             cluster.initial_user_positions = np.array(
                 [u.position.copy() for u in cluster.users], dtype=np.float32
             )

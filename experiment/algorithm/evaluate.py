@@ -109,9 +109,9 @@ def run_evaluation(env_config, train_config, dqn_config,
             if uav.current_battery_capacity <= 0:
                 continue
             if agent_type == 'ppo':
-                state = make_ppo_state(uav)
+                state = make_ppo_state(uav, uavs)
             elif agent_type == 'ddpg':
-                state = make_ddpg_state(uav)
+                state = make_ddpg_state(uav, uavs)
             else:
                 state = uav.get_state(uavs)
             action = agent.choose_action(state)

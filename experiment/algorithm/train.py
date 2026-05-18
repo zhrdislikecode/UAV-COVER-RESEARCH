@@ -183,7 +183,7 @@ def run_training_ppo(env, uavs, agent, config, save_dir="models", macro_schedule
                     continue
                 total_step += 1
                 agent.set_uav_index(i)
-                state = make_ppo_state(uav)
+                state = make_ppo_state(uav, uavs)
                 action = agent.choose_action(state)
                 next_state, reward, done, covered, com = uav.step(action)
                 # PPO reward shaping: 连续距离惩罚，引导 UAV 紧贴集群中心
@@ -192,7 +192,7 @@ def run_training_ppo(env, uavs, agent, config, save_dir="models", macro_schedule
                         uav.position[:2] - uav.follow_cluster.center[:2]))
                     reward -= 0.5 * dist_to_center
                 agent.store_transition(
-                    (state, action, reward, make_ppo_state(uav), float(done)))
+                    (state, action, reward, make_ppo_state(uav, uavs), float(done)))
 
                 if uav.current_battery_capacity <= 0:
                     uav.is_consume_energy = True
@@ -258,11 +258,11 @@ def run_training_ddpg(env, uavs, agent, config, save_dir="models", macro_schedul
                 if uav.current_battery_capacity <= 0:
                     continue
                 total_step += 1
-                state = make_ddpg_state(uav)
+                state = make_ddpg_state(uav, uavs)
                 action = agent.choose_action(state)
                 _, reward, done, covered, com = uav.step_continuous(action)
                 # DDPG reward shaping: 连续距离惩罚，引导 UAV 贴紧集群中心
-                next_state = make_ddpg_state(uav)
+                next_state = make_ddpg_state(uav, uavs)
                 if uav.follow_cluster is not None:
                     dist_to_center = float(np.linalg.norm(
                         uav.position[:2] - uav.follow_cluster.center[:2]))

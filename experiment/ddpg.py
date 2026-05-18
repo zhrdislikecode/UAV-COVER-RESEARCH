@@ -6,19 +6,30 @@ import torch.optim as optim
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def make_ddpg_state(uav):
-    """构建 DDPG 专用状态向量 (6维)：[dx, dy, cvx, cvy, dist, battery_ratio]
+def make_ddpg_state(uav, all_uavs=None):
+    """构建 DDPG 专用状态向量: [dx, dy, cvx, cvy, dist, battery] + [其他UAV位置...]
 
-    使用 UAV 与集群的相对位置，平移不变，更适合连续控制。
+    Args:
+        uav: 当前 UAV
+        all_uavs: 所有 UAV 列表，用于添加其他 UAV 位置
     """
     raw = uav.get_state()
+    base_dim = 6
+    if all_uavs is not None:
+        base_dim += 2 * (len(all_uavs) - 1)
     if not np.any(raw):
-        return raw
+        return np.zeros(base_dim, dtype=np.float32)
     dx = raw[4] - raw[0]
     dy = raw[5] - raw[1]
     dist = np.sqrt(dx * dx + dy * dy)
     battery_ratio = uav.current_battery_capacity / uav.total_battery_capacity
-    return np.array([dx, dy, raw[2], raw[3], dist, battery_ratio], dtype=np.float32)
+    state = [dx, dy, raw[2], raw[3], dist, battery_ratio]
+    if all_uavs is not None:
+        for other in all_uavs:
+            if other.id != uav.id:
+                op = other.get_position()
+                state.extend([op[0], op[1]])
+    return np.array(state, dtype=np.float32)
 
 
 # ============================================================
@@ -103,7 +114,10 @@ class DDPGAgent:
         s[2] /= 0.1    # cvx ~0.04
         s[3] /= 0.1    # cvy ~0.04
         s[4] /= 21.0   # dist ∈ [0, ~21]
-        # s[5] = battery_ratio ∈ [0, 1]，无需缩放
+        # s[5] = battery_ratio ∈ [0, 1]
+        # 其他 UAV 位置: 除以 scene_size
+        for i in range(6, len(s)):
+            s[i] /= 15.0
         return s
 
     def choose_action(self, state):

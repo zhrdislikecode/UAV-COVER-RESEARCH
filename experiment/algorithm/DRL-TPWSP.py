@@ -91,9 +91,9 @@ def evaluate(agent_type=AGENT_TYPE, macro_scheduler='hungarian'):
 
 if __name__ == "__main__":
     # --- 训练（匈牙利调度）---
-    # train('dqn', macro_scheduler='hungarian')
-    # train('ppo', macro_scheduler='hungarian')
-    # train('ddpg', macro_scheduler='hungarian')
+    train('dqn', macro_scheduler='hungarian')
+    train('ppo', macro_scheduler='hungarian')
+    train('ddpg', macro_scheduler='hungarian')
 
     # --- 训练（GCN 调度，需先运行 train_gcn.py）---
     # train('ppo', macro_scheduler='gcn')
@@ -103,6 +103,8 @@ if __name__ == "__main__":
 
     # --- 评估 ---
     evaluate('dqn', macro_scheduler='hungarian')
+    evaluate('ppo', macro_scheduler='hungarian')
+    evaluate('ddpg', macro_scheduler='hungarian')
 
 
 

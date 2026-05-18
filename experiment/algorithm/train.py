@@ -108,9 +108,10 @@ def run_training_dqn(env, uavs, agent, config, save_dir="models", macro_schedule
                 if uav.current_battery_capacity <= 0:
                     continue
                 total_step += 1
-                state = uav.get_state()
+                state = uav.get_state(uavs)
                 action = agent.choose_action(state)
-                next_state, reward, done, covered, com = uav.step(action)
+                _, reward, done, covered, com = uav.step(action)
+                next_state = uav.get_state(uavs)
                 agent.store_transition(
                     (state, action, reward, next_state, float(done)))
 
@@ -143,7 +144,7 @@ def run_training_dqn(env, uavs, agent, config, save_dir="models", macro_schedule
                          covered_rate, jain_index)
 
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "drl_tpwsp_dqn.pth")
+    save_path = os.path.join(save_dir, f"drl_tpwsp_dqn_uav_{len(uavs)}.pth")
     agent.save_model(save_path)
     print(f"Model saved to: {save_path}")
 
@@ -217,7 +218,7 @@ def run_training_ppo(env, uavs, agent, config, save_dir="models", macro_schedule
                          covered_rate, jain_index)
 
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "drl_tpwsp_ppo.pth")
+    save_path = os.path.join(save_dir, f"drl_tpwsp_ppo_uav_{len(uavs)}.pth")
     agent.save_model(save_path)
     print(f"Model saved to: {save_path}")
 
@@ -295,7 +296,7 @@ def run_training_ddpg(env, uavs, agent, config, save_dir="models", macro_schedul
                          covered_rate, jain_index)
 
     os.makedirs(save_dir, exist_ok=True)
-    save_path = os.path.join(save_dir, "drl_tpwsp_ddpg.pth")
+    save_path = os.path.join(save_dir, f"drl_tpwsp_ddpg_uav_{len(uavs)}.pth")
     agent.save_model(save_path)
     print(f"Model saved to: {save_path}")
 

@@ -113,7 +113,7 @@ def run_evaluation(env_config, train_config, dqn_config,
             elif agent_type == 'ddpg':
                 state = make_ddpg_state(uav)
             else:
-                state = uav.get_state()
+                state = uav.get_state(uavs)
             action = agent.choose_action(state)
 
             if continuous:

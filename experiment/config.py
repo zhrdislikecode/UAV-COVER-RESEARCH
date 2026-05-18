@@ -9,7 +9,7 @@ class EnvConfig:
     cluster_num: int = 6
     cluster_radius: float = 0.3
     users_per_cluster: int = 30
-    uav_num: int = 3
+    uav_num: int = 2
     uav_fly_multiple: int = 3
 
 

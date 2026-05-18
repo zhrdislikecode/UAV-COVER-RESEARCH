@@ -43,6 +43,7 @@ def train(agent_type=AGENT_TYPE, macro_scheduler='hungarian'):
     """
     env_config = EnvConfig()
     dqn_config = DQNConfig()
+    dqn_config.state_dim = 6 + 2 * (env_config.uav_num - 1)  # 含其他 UAV 位置
     train_config = TrainConfig()
 
     env = Environment(
@@ -54,7 +55,8 @@ def train(agent_type=AGENT_TYPE, macro_scheduler='hungarian'):
             for i in range(env_config.uav_num)]
 
     agent = _create_agent(agent_type, dqn_config)
-    print(f"Training with {agent_type.upper()} agent + {macro_scheduler} macro scheduler...")
+    n_uav = env_config.uav_num
+    print(f"Training with {agent_type.upper()} agent + {macro_scheduler} macro scheduler (UAV={n_uav})...")
 
     train_funcs = {'dqn': run_training_dqn, 'ppo': run_training_ppo,
                    'ddpg': run_training_ddpg}
@@ -70,10 +72,13 @@ def evaluate(agent_type=AGENT_TYPE, macro_scheduler='hungarian'):
     """
     env_config = EnvConfig()
     dqn_config = DQNConfig()
+    dqn_config.state_dim = 6 + 2 * (env_config.uav_num - 1)
     train_config = TrainConfig()
 
-    model_names = {'dqn': 'drl_tpwsp_dqn.pth', 'ppo': 'drl_tpwsp_ppo.pth',
-                   'ddpg': 'drl_tpwsp_ddpg.pth'}
+    n_uav = env_config.uav_num
+    model_names = {'dqn': f'drl_tpwsp_dqn_uav_{n_uav}.pth',
+                   'ppo': f'drl_tpwsp_ppo_uav_{n_uav}.pth',
+                   'ddpg': f'drl_tpwsp_ddpg_uav_{n_uav}.pth'}
     model_path = f"models/{model_names.get(agent_type, model_names['dqn'])}"
 
     value, total_com, jain_index = run_evaluation(
@@ -97,7 +102,7 @@ if __name__ == "__main__":
     # train('ppo', macro_scheduler='macro_ddqn')
 
     # --- 评估 ---
-    evaluate('ddpg', macro_scheduler='hungarian')
+    evaluate('dqn', macro_scheduler='hungarian')
 
 
 

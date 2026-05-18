@@ -145,14 +145,28 @@ class UAV:
     def get_position(self):
         return self.position
 
-    def get_state(self):
-        """获取简单状态向量 (6维): [cluster_x, cluster_y, cluster_vx, cluster_vy, uav_x, uav_y]"""
+    def get_state(self, all_uavs=None):
+        """获取状态向量: [cx, cy, cvx, cvy, ux, uy] + [其他UAV的x,y]...
+
+        Args:
+            all_uavs: 所有 UAV 列表，用于添加其他 UAV 位置
+        """
         if self.follow_cluster is None:
-            return np.zeros(6, dtype=np.float32)
+            base_dim = 6
+            if all_uavs is not None:
+                base_dim += 2 * (len(all_uavs) - 1)
+            return np.zeros(base_dim, dtype=np.float32)
         cluster_pos = np.array(self.follow_cluster.center)
         cluster_dir = np.array(self.follow_cluster.direction)
         uav_pos = self.get_position()
-        return np.concatenate([cluster_pos, cluster_dir, uav_pos]).astype(np.float32)
+        state = [cluster_pos[0], cluster_pos[1], cluster_dir[0], cluster_dir[1],
+                 uav_pos[0], uav_pos[1]]
+        if all_uavs is not None:
+            for other in all_uavs:
+                if other.id != self.id:
+                    op = other.get_position()
+                    state.extend([op[0], op[1]])
+        return np.array(state, dtype=np.float32)
 
     # ---- 微观移动 ----
     def step(self, action: int):

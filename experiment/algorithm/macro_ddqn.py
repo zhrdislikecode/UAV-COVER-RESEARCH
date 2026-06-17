@@ -136,7 +136,7 @@ class MacroAgent:
 
     def __init__(self, state_dim=STATE_DIM, action_dim=ACTION_DIM,
                  lr=1e-3, gamma=0.99, epsilon_start=1.0, epsilon_end=0.05,
-                 epsilon_decay=0.995, batch_size=128, memory_size=50000,
+                 epsilon_decay=0.99, batch_size=128, memory_size=50000,
                  target_update_interval=100, hidden=128, reward_clip=100.0):
         self.state_dim = state_dim
         self.action_dim = action_dim

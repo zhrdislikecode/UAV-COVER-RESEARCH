@@ -97,7 +97,8 @@ if __name__ == "__main__":
     # train('ppo', macro_scheduler='macro_ddqn')
 
     # --- 评估 ---
-    evaluate('ddpg', macro_scheduler='hungarian')
+    evaluate('dqn', macro_scheduler='hungarian')
+    evaluate('ddpg', macro_scheduler='macro_ddqn')
 
 
 

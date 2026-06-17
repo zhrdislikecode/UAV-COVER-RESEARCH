@@ -255,20 +255,46 @@ class UAV:
 
     # ---- 方向修正 ----
     def revise_direction(self, action: int) -> int:
-        """将动作修正为朝向目标集群的方向"""
+        """修正方向：动作与集群移动方向偏离>45°时取角平分线"""
         if self.follow_cluster is None:
             return action
-        target = self.follow_cluster.center + self.follow_cluster.direction
-        best_action, best_dist = 0, float("inf")
-        for a, move in enumerate(self.moves):
-            if np.linalg.norm(move) == 0:
+
+        move_vec = self.moves[action]
+        move_norm = float(np.linalg.norm(move_vec))
+        if move_norm < 1e-6:
+            return action
+
+        cluster_dir = self.follow_cluster.direction
+        if cluster_dir is None:
+            return action
+        cluster_norm = float(np.linalg.norm(cluster_dir))
+        if cluster_norm < 1e-6:
+            return action
+
+        cos_a = float(np.dot(move_vec, cluster_dir)) / (move_norm * cluster_norm)
+        cos_a = np.clip(cos_a, -1.0, 1.0)
+        angle = float(np.degrees(np.arccos(cos_a)))
+        if angle <= 45.0:
+            return action
+
+        move_unit = move_vec / move_norm
+        cluster_unit = cluster_dir / cluster_norm
+        bisector = move_unit + cluster_unit
+        b_norm = float(np.linalg.norm(bisector))
+        if b_norm < 1e-6:
+            return action
+        bisector_unit = bisector / b_norm
+
+        best_a, best_dot = 0, -float("inf")
+        for a, mv in enumerate(self.moves):
+            mn = float(np.linalg.norm(mv))
+            if mn < 1e-6:
                 continue
-            new_pos = self.position + move
-            dist = float(np.linalg.norm(new_pos - target))
-            if dist < best_dist:
-                best_dist = dist
-                best_action = a
-        return best_action
+            dot_val = float(np.dot(mv / mn, bisector_unit))
+            if dot_val > best_dot:
+                best_dot = dot_val
+                best_a = a
+        return best_a
 
     # ============================================================
     #  PK 变体方法（供 DMTD 等算法使用）

@@ -18,8 +18,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ============================================================
 #  常量
 # ============================================================
-STATE_DIM = 15     # top-3 × 5
-ACTION_DIM = 4     # keep, top-1, top-2, top-3
+STATE_DIM = 5      # top-1 × 5
+ACTION_DIM = 2     # keep, switch-to-best
 TOP_K = 3
 HUN_WEIGHT = 0.5   # 匈牙利权重（score vs distance）
 
@@ -44,7 +44,7 @@ class MacroQNet(nn.Module):
 #  状态构建（15 维：top-3 × 5 特征）
 # ============================================================
 def build_macro_state(uav, env, other_uavs, scene_size=15.0):
-    """构建宏观调度状态向量 (15 维)
+    """构建宏观调度状态向量 (5 维)
 
     候选评分 = 匈牙利 benefit: 0.5*score_norm + 0.5*dist_benefit
     取 top-3（排除已被兄弟覆盖的集群，当前集群强制保留）
@@ -101,15 +101,15 @@ def build_macro_state(uav, env, other_uavs, scene_size=15.0):
     while len(top3) < TOP_K:
         top3.append((-1, -999., 0., 0., 0., 0.))
 
-    # ── 构建 state ──
+    # ── 构建 state（只用 top-1，5维）──
     state = np.zeros(STATE_DIM, dtype=np.float32)
-    for k, (cid, benefit, sn, db, cov, den) in enumerate(top3):
-        base = k * 5
-        state[base + 0] = sn          # score_norm
-        state[base + 1] = db          # dist_benefit
-        state[base + 2] = 1.0 if cid == cur_id else 0.0  # is_current
-        state[base + 3] = cov         # covered_by_other
-        state[base + 4] = den         # density_norm
+    if top3 and top3[0][0] >= 0:
+        cid, benefit, sn, db, cov, den = top3[0]
+        state[0] = sn
+        state[1] = db
+        state[2] = 1.0 if cid == cur_id else 0.0
+        state[3] = cov
+        state[4] = den
 
     return np.nan_to_num(state, nan=0.0), top3
 

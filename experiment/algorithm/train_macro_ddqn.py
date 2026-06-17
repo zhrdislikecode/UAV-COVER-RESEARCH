@@ -25,6 +25,7 @@ np.random.seed(42)
 #  训练超参数
 # ============================================================
 MIN_STAY = 10              # 切换后最少停留步数
+KEEP_PENALTY = -5.0         # 保持惩罚
 
 
 def _reset_uavs(uavs):
@@ -143,30 +144,21 @@ def train_online(num_episodes=500, model_save_path="models/macro_ddqn.pth"):
                 uav_pos = uav.position[:2]
 
                 if action == 0:
-                    # ── Keep ──
-                    sn = uav.follow_cluster.score / max_score
-                    reward = 0.5 * sn + 0.5 * 1.0
+                    # ── Keep ── 大惩罚
                     agent.store_transition(
-                        cur_state.copy(), 0, reward,
+                        cur_state.copy(), 0, KEEP_PENALTY,
                         cur_state.copy(), False)
-                    ep_rewards.append(reward)
+                    ep_rewards.append(KEEP_PENALTY)
 
                 else:
-                    # ── Switch ──
-                    k = action - 1
-                    if k < len(top3) and top3[k][0] >= 0:
-                        target = env.clusters[top3[k][0]]
+                    # ── Switch ── 始终切到最佳 (top3[0])
+                    if top3 and top3[0][0] >= 0:
+                        target = env.clusters[top3[0][0]]
                         if uav.follow_cluster != target:
-                            # 锁定切换瞬间的分数和距离
-                            sn = target.score / max_score
-                            d = float(np.linalg.norm(
-                                uav_pos - target.center[:2]))
-                            max_d = max(float(np.linalg.norm(
-                                uav_pos - c.center[:2])) for c in env.clusters)
-                            db = 1.0 - d / max(max_d, 1e-6)
+                            # 使用 top3[0] 预计算的 benefit 值
+                            _, _, sn, db, _, _ = top3[0]
                             reward = 0.5 * sn + 0.5 * db
 
-                            # 瞬移到目标集群
                             uav.follow_cluster = target
                             uav.position = np.array(
                                 [target.center[0], target.center[1]],
@@ -176,13 +168,11 @@ def train_online(num_episodes=500, model_save_path="models/macro_ddqn.pth"):
                             uav.stay_pending = (cur_state.copy(), action)
                             ep_switches += 1
                         else:
-                            # 目标就是当前集群 → 等同于 keep
-                            sn = uav.follow_cluster.score / max_score
-                            reward = 0.5 * sn + 0.5 * 1.0
+                            # 最佳就是当前 → 等同 keep 大惩罚
                             agent.store_transition(
-                                cur_state.copy(), 0, reward,
+                                cur_state.copy(), 0, KEEP_PENALTY,
                                 cur_state.copy(), False)
-                            ep_rewards.append(reward)
+                            ep_rewards.append(KEEP_PENALTY)
 
                 # 在线训练
                 m = agent.train()
@@ -213,8 +203,7 @@ def train_online(num_episodes=500, model_save_path="models/macro_ddqn.pth"):
             avg_loss = np.mean(ep_losses) if ep_losses else 0.0
             avg_r = np.mean(ep_rewards) if ep_rewards else 0.0
             avg_q = np.mean([t[2] for t in agent.buffer[-1000:]]) if agent.buffer else 0.0
-            act_str = (f"k:{action_counts[0]} s1:{action_counts[1]} "
-                       f"s2:{action_counts[2]} s3:{action_counts[3]}")
+            act_str = f"k:{action_counts[0]} sw:{action_counts[1]}"
             print(f"  {episode:4d}  {agent.epsilon:6.3f}  {avg_loss:8.4f}  "
                   f"{avg_q:8.4f}  {avg_r:+8.4f}  {ep_switches:4d}  {act_str}")
 

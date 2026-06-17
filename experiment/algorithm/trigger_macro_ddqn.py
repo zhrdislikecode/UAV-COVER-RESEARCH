@@ -18,8 +18,8 @@ from experiment.algorithm.trigger import (
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-INFER_INTERVAL = 10
-INFER_MIN_STAY = 10
+INFER_INTERVAL = 30
+INFER_MIN_STAY = 30
 
 _agent_cache = {}
 
@@ -98,20 +98,26 @@ def try_trigger_deployment_macro_ddqn(env, uavs, step, deploy_idx, config,
         state, top3 = build_macro_state(uav, env, other_uavs, scene_size=15.0)
         action = agent.choose_action(state, training=False)
 
-        if action != 0:
-            k = action - 1
-            if k < len(top3) and top3[k][0] >= 0:
-                target = env.clusters[top3[k][0]]
-                if uav.follow_cluster != target:
-                    execute_macro_switch(uav, target, env_slot=env.slot)
-                    triggered = True
-                    decisions.append((i, top3[k][0], f'sw{k+1}'))
-                else:
-                    decisions.append((i, -1, 'keep(same)'))
-            else:
-                decisions.append((i, -1, 'keep(invalid)'))
-        else:
+        if action == 0:
             decisions.append((i, -1, 'keep'))
+        else:
+            # Switch to best with conflict avoidance
+            target_idx = None
+            for candidate in top3:
+                cid = candidate[0]
+                if cid < 0:
+                    break
+                if uav.follow_cluster is not None and cid == uav.follow_cluster.id:
+                    continue
+                if candidate[4] == 0.0:
+                    target_idx = cid
+                    break
+            if target_idx is not None:
+                execute_macro_switch(uav, env.clusters[target_idx], env_slot=env.slot)
+                triggered = True
+                decisions.append((i, target_idx, 'sw(best)'))
+            else:
+                decisions.append((i, -1, 'keep(conflict)'))
 
     if triggered:
         n_triggered = deploy_idx + 1

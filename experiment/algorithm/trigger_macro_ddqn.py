@@ -18,8 +18,8 @@ from experiment.algorithm.trigger import (
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-INFER_INTERVAL = 30
-INFER_MIN_STAY = 30
+INFER_INTERVAL = 20
+INFER_MIN_STAY = 20
 
 _agent_cache = {}
 

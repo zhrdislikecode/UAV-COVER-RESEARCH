@@ -5,7 +5,7 @@ from dataclasses import dataclass
 class EnvConfig:
     """环境相关配置"""
     scene_size: float = 15.0
-    slot: int = 6
+    slot: int = 8
     cluster_num: int = 6
     cluster_radius: float = 0.3
     users_per_cluster: int = 30
